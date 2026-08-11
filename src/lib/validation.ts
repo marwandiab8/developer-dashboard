@@ -21,6 +21,15 @@ import {
 } from "./models";
 
 const externalSourceTypeSchema = z.enum(["github"] as const satisfies readonly ExternalSourceType[]);
+const externalSessionIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine(
+    (value) => [...value].every((character) => character >= " " && character !== "\u007f"),
+    "Invalid external session ID",
+  );
 const externalAssociationStatusSchema = z.enum([
   "unknown",
   "not_detected",
@@ -110,6 +119,7 @@ export const ideaSchema = z.object({
   status: z.enum(["inbox", "reviewed", "accepted", "rejected", "converted", "archived"] as const satisfies readonly IdeaStatus[]),
   priority: z.enum(["low", "medium", "high", "critical"] as const satisfies readonly IdeaPriority[]),
   source: z.enum(["phone", "ipad", "desktop", "ChatGPT", "Codex", "voice", "other"] as const satisfies readonly IdeaSource[]),
+  externalSessionId: externalSessionIdSchema.optional(),
   tags: z.array(z.string()),
   linkedTaskId: z.string().uuid().nullable(),
   createdAt: z.string().datetime(),
@@ -174,6 +184,9 @@ export const codexPromptSchema = z.object({
   resultSummary: z.string(),
   status: z.enum(["draft", "ready", "used", "archived"] as const satisfies readonly PromptStatus[]),
   relatedTaskId: z.string().uuid().nullable(),
+  relatedSessionId: z.string().uuid().nullable().optional(),
+  source: z.literal("codex").optional(),
+  externalSessionId: externalSessionIdSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
@@ -209,6 +222,12 @@ export const developmentSessionSchema = z.object({
   endedAt: z.string().datetime().nullable(),
   objective: z.string(),
   summary: z.string(),
+  source: z.literal("codex").optional(),
+  externalSessionId: externalSessionIdSchema.optional(),
+  branch: z.string().trim().min(1).max(512).optional(),
+  completedItems: z.array(z.string()).max(100).optional(),
+  unfinishedItems: z.array(z.string()).max(100).optional(),
+  currentBlocker: z.string().optional(),
   tasksWorkedOn: z.array(z.string().uuid()),
   tasksCompleted: z.array(z.string().uuid()),
   ideasAdded: z.array(z.string().uuid()),
@@ -233,6 +252,8 @@ export const activityEventSchema = z.object({
   entityType: z.string(),
   entityId: z.string(),
   metadata: z.string(),
+  source: z.literal("codex").optional(),
+  externalSessionId: externalSessionIdSchema.optional(),
   createdAt: z.string().datetime(),
 });
 

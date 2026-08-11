@@ -8,6 +8,7 @@
 - Access to Firebase project marwan-developer-dashboard
 - A Firebase Authentication user for the dashboard owner
 - A read-only fine-grained GitHub token created according to docs/FIREBASE_SETUP.md
+- A unique purpose-limited Codex ingestion credential kept in Secret Manager and a trusted local secret store
 
 ## Application setup
 
@@ -24,7 +25,7 @@ The complete Dashboard remains available in local mode without signing in. Authe
     cd /home/marwan/Documents/developer-dashboard/functions
     npm install
 
-Do not add a GitHub token or owner UID to a local environment file for convenience. Callable authentication tests must use mocks or emulator-safe fixtures, never the real token.
+Do not add a GitHub token, Codex ingestion credential, or owner UID to a local environment file for convenience. Authentication tests must use mocks or emulator-safe fixtures, never a real credential.
 
 ## Required validation before deployment
 
@@ -51,14 +52,27 @@ No validation result is considered passed until the command exits successfully. 
 
 ## Credential setup and historical state
 
-Follow docs/FIREBASE_SETUP.md. Store both values through interactive prompts:
+Follow docs/FIREBASE_SETUP.md. Store server-side values through interactive prompts:
 
     firebase functions:secrets:set GITHUB_READ_TOKEN --project marwan-developer-dashboard
     firebase functions:secrets:set DASHBOARD_OWNER_UID --project marwan-developer-dashboard
+    firebase functions:secrets:set CODEX_INGEST_TOKEN --project marwan-developer-dashboard
 
-Never paste either value into Codex or chat.
+Never paste any secret value into Codex or chat.
 
-Historical read-only metadata checks dated 2026-08-06 recorded both secret versions as enabled. They were not reverified in the current remediation; do not infer current production state from local source alone.
+Historical read-only metadata checks dated 2026-08-06 recorded only GITHUB_READ_TOKEN and DASHBOARD_OWNER_UID as enabled. They did not include CODEX_INGEST_TOKEN and were not reverified in the current remediation; do not infer current production state from local source alone.
+
+## Codex reporting helper
+
+The shared helper is dependency-free and can be called from another repository by absolute path:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs complete --file /path/to/codex-session.json
+
+It requires `DEVELOPER_DASHBOARD_CODEX_INGEST_URL` and `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN` in the process environment. Load the credential through a non-echoing prompt or trusted local secret-store integration; never pass it as a command argument. The helper also accepts the report on stdin:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs complete < /path/to/codex-session.json
+
+See `docs/CODEX_SESSION_INGESTION.md` for the exact payload and the copyable per-project `AGENTS.md` instruction. Reporting is automatic only for projects that opt in to that instruction and provide the environment safely.
 
 ## Manual local checks
 
@@ -75,12 +89,16 @@ Without real credentials, verify mocked states for:
 - Public, private, archived, and forked badges
 - Repository links and synchronization status
 - Manual project cards with no GitHub metadata
+- Valid, missing, and invalid Codex ingestion authentication using fixtures only
+- Exact Dashboard ID, GitHub numeric ID, and normalized full-name project resolution
+- Identical Codex session retry with unchanged IDs and no duplicate visible records
+- Codex continuity protection after a manual objective, blocker, or next-step edit
 
 ## Deployment gate
 
 Do not deploy Functions, Firestore rules, Firestore indexes, Cloud Scheduler jobs, or App Hosting until:
 
-1. Current secret metadata is checked without accessing values.
+1. Current secret metadata required by the selected deployment scope is checked without accessing values.
 2. All required validation passes for the exact source to deploy.
 3. The intended Firebase project and deployment scopes are confirmed.
 4. The user explicitly approves that deployment.

@@ -4,9 +4,9 @@ Target Firebase project:
 
     marwan-developer-dashboard
 
-Current state: no deployment is authorized. The local working tree is ahead of the stale GitHub `main` branch and must pass pre-commit review before any release decision.
+GitHub `main` contains the released Firebase/GitHub baseline and project-workbench route repair. A later working tree is not implicitly deployed and must pass the gates below before a separately authorized release.
 
-`CODEX_STATUS.md` records historical Functions, scheduler, and App Hosting deployment evidence from 2026-08-06. That evidence is useful history, but production was not reverified during the current remediation.
+`CODEX_STATUS.md` is the sole operational record. It preserves the 2026-08-06 history and the newer 2026-08-11 main/App Hosting/backend verification; neither record proves that a subsequent feature is live.
 
 ## Hard gates
 
@@ -14,6 +14,7 @@ Do not deploy until all conditions are true:
 
 - GITHUB_READ_TOKEN is configured in Secret Manager.
 - DASHBOARD_OWNER_UID is configured in Secret Manager.
+- CODEX_INGEST_TOKEN is configured in Secret Manager before deploying `ingestCodexSession`.
 - Functions lint passes.
 - Functions typecheck passes.
 - Functions tests pass.
@@ -34,8 +35,9 @@ A configured token is not deployment approval.
     cd /home/marwan/Documents/developer-dashboard
     firebase functions:secrets:set GITHUB_READ_TOKEN --project marwan-developer-dashboard
     firebase functions:secrets:set DASHBOARD_OWNER_UID --project marwan-developer-dashboard
+    firebase functions:secrets:set CODEX_INGEST_TOKEN --project marwan-developer-dashboard
 
-Do not put either value in the command, shell history, chat, source, or a report.
+Do not put any secret value in the command, shell history, chat, source, or a report.
 
 ## Preflight
 
@@ -65,7 +67,7 @@ Stop on the first unexpected failed validation command. Audit commands may exit 
 
 ## Deployment commands requiring explicit approval
 
-Functions, including the scheduled job:
+Existing GitHub synchronization Functions, including the scheduled job:
 
     firebase deploy --only functions:getGitHubConnectionStatus,functions:syncGitHubRepositories,functions:scheduledSyncGitHubRepositories --project marwan-developer-dashboard
 
@@ -80,9 +82,17 @@ Schedule:
     timeZone: America/Toronto
     cadence: daily at 03:15 local time
 
+Deploy the Codex ingestion Function alone when it is the only changed Functions resource:
+
+    firebase deploy --only functions:ingestCodexSession --project marwan-developer-dashboard
+
 Firestore rules and indexes, only if the final implementation changed them:
 
     firebase deploy --only firestore:rules,firestore:indexes --project marwan-developer-dashboard
+
+If only the new backend-only Codex rule paths changed and indexes did not, deploy rules alone:
+
+    firebase deploy --only firestore:rules --project marwan-developer-dashboard
 
 App Hosting, only if separately approved:
 
@@ -127,11 +137,28 @@ Scheduled verification:
 6. Inspect only safe count, timing, lease, and rate-limit logs.
 7. Do not print environment, secret, repository file, or authorization data.
 
+Codex ingestion verification:
+
+1. Confirm `ingestCodexSession` is active in us-east4 and binds `CODEX_INGEST_TOKEN` plus `DASHBOARD_OWNER_UID` without accessing either value.
+2. Confirm its deployed configuration reports HTTPS `onRequest`, CORS disabled, a 60-second timeout, 256 MiB memory, and maximum two instances.
+3. Confirm GET receives method-not-allowed, a missing or invalid bearer credential receives unauthenticated, and neither request creates records.
+4. Submit one bounded synthetic V1 report to a known project through the helper.
+5. Verify exactly one DevelopmentSession, one CodexPrompt, one `session_completed` ActivityEvent, and the expected ideas appear.
+6. Retry the byte-identical report and confirm `status: "duplicate"` with the same result IDs and no additional records.
+7. Confirm the Workbench, Development Sessions, Codex Prompts, Activity, PROJECT_RESUME.md, and AI_CONTEXT.md show the semantic context.
+8. Remove or archive the synthetic visible records only through an intentional Dashboard operation; never delete backend receipts merely to repeat a test.
+9. Inspect only sanitized status, count, and category data. Never print the bearer credential, owner UID, request body, prompt, or Secret Manager values.
+
 ## Failure behavior
 
 - Authentication failure: stop and correct Firebase Auth configuration.
 - Wrong owner: correct DASHBOARD_OWNER_UID through a new interactive secret version.
 - Missing token: set GITHUB_READ_TOKEN interactively.
+- Missing ingestion configuration: set `CODEX_INGEST_TOKEN` interactively and redeploy only the bound Function after approval.
+- Codex authentication failure: reload the approved credential from the local secret store; never put it in a command argument.
+- Project not associated or selector mismatch: correct the stable Dashboard/GitHub identity in the payload; do not fall back to title matching or automatic project creation.
+- Idempotency conflict: the helper reports a distinct conflicting-retry failure; use the original payload for that external session ID or create a genuinely new external session ID, and do not overwrite the receipt.
+- Codex rate limit: wait for the next UTC minute; do not parallelize retries.
 - Rate limit: wait until the reported reset time.
 - Active lease: allow the existing run to finish or the lease to expire.
 - Partial repository failures: preserve successful results and inspect safe categories only.

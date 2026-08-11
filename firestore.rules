@@ -42,6 +42,21 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // Codex ingestion is authenticated and written only by the dedicated
+      // Admin SDK Function. Browser clients cannot inspect receipts, throttle
+      // state, or the per-project continuity ownership record.
+      match /codexIngestion/{document=**} {
+        allow read, write: if false;
+      }
+
+      match /codexIngestionReceipts/{document=**} {
+        allow read, write: if false;
+      }
+
+      match /codexContinuity/{document=**} {
+        allow read, write: if false;
+      }
+
       // Every optimistic client mutation receives an immutable transaction
       // receipt. A retained local journal can therefore distinguish an
       // acknowledged write from one that never committed without replaying

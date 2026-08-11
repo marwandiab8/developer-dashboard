@@ -1,6 +1,6 @@
 # GitHub Import and Synchronization Contract (Milestone 2)
 
-Status: implemented in the current working tree. Current local validation is recorded in `CODEX_STATUS.md`; GitHub `main` is still stale. Historical 2026-08-06 deployment evidence has not been reverified in production during the current remediation.
+Status: implemented and released on GitHub `main`. Current validation and deployment evidence is recorded only in `CODEX_STATUS.md`; source text alone is not proof that a later change is live. The deployed backend inventory was reverified on 2026-08-11, while authenticated browser and physical cross-device behavior still require manual acceptance.
 
 ## Scope
 

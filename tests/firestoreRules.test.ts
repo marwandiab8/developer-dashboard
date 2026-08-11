@@ -160,6 +160,37 @@ describeWithEmulator("Firestore client privilege boundaries", () => {
     ));
   });
 
+  it("denies browser access to Codex ingestion receipts, throttle state, and continuity ownership", async () => {
+    const paths = [
+      "users/owner/codexIngestion/minute-2026-08-11T14-00",
+      "users/owner/codexIngestionReceipts/receipt-1",
+      "users/owner/codexContinuity/project-1",
+    ];
+
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const adminDb = context.firestore();
+      await Promise.all(paths.map((path) => setDoc(doc(adminDb, path), {
+        backendOwned: true,
+      })));
+    });
+
+    const ownerDb = environment.authenticatedContext("owner").firestore();
+    const otherDb = environment.authenticatedContext("other").firestore();
+    const signedOutDb = environment.unauthenticatedContext().firestore();
+
+    for (const path of paths) {
+      await assertFails(getDoc(doc(ownerDb, path)));
+      await assertFails(setDoc(doc(ownerDb, path), { backendOwned: false }, { merge: true }));
+      await assertFails(deleteDoc(doc(ownerDb, path)));
+      await assertFails(getDoc(doc(otherDb, path)));
+      await assertFails(setDoc(doc(otherDb, path), { backendOwned: false }, { merge: true }));
+      await assertFails(deleteDoc(doc(otherDb, path)));
+      await assertFails(getDoc(doc(signedOutDb, path)));
+      await assertFails(setDoc(doc(signedOutDb, path), { backendOwned: false }, { merge: true }));
+      await assertFails(deleteDoc(doc(signedOutDb, path)));
+    }
+  });
+
   it("allows only the owner to create immutable, narrowly-shaped reconciliation receipts", async () => {
     const ownerDb = environment.authenticatedContext("owner").firestore();
     const receiptPath =

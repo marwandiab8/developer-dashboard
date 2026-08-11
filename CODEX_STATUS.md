@@ -6,16 +6,17 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 
 ## Current working-tree status
 
-- Intended and confirmed branch: `recovery/firebase-github-sync-2026-08-07`.
-- GitHub `main` remains stale; this working tree has not been committed or pushed.
-- Firebase Authentication, UID-scoped Firestore persistence, signed-out local mode, safe local migration, App Hosting configuration, and owner-only GitHub synchronization are implemented locally.
+- Confirmed branch: `main`.
+- Local `main` and `origin/main` both point to released baseline commit `75e519d706e1ee54f87dd5ced5767342096cb699` (`fix: repair project workbench dynamic routing`). That hotfix follows validated release commit `04c02a6a572ae728dfdbc39f9ae651db6ca1a62d`.
+- The released baseline is live. The automatic Codex session ingestion feature described below is implemented and validated only in the current working tree; it has not yet been committed, pushed, deployed, or verified against production.
+- Firebase Authentication, UID-scoped Firestore persistence, signed-out local mode, safe local migration, App Hosting, and owner-only GitHub synchronization remain part of the released baseline.
 - Remediation Pass 2 adds legacy-local-data protection, durable and ordered local fallback after failed cloud actions, atomic create-if-absent migration, immutable session-note reconciliation receipts, backend-only synchronization rules, bounded direct-path GitHub configuration discovery with explicit partial/unknown results, and release-document reconciliation.
 - Remediation Pass 3 hardens account-scoped recovery isolation, UID-switch and stale-auth guards, revision-aware import/keep-cloud decisions, invocation-ordered cloud replay, deferred realtime snapshots during dependent queued actions, Firestore parent-recency consistency, GitHub synchronization transaction conflicts, and concurrent rate-limit metadata merging.
 - Remediation Pass 4 resolves the seven final-review P2 blocker groups listed below, plus the focused authenticated-UID reset and manual `currentBranch` ownership regressions.
 - Remediation Pass 5 resolves the four confirmed final blockers listed below: atomic local payload/revision durability, pending-mutation recovery projection, observable Quick Capture acceptance, and fatal GitHub enrichment rate exhaustion.
-- No commit, push, deployment, reset, clean, discard, or staging operation is authorized or recorded in this pass.
-- Production and secret metadata were not reverified on 2026-08-11. The live evidence below is historical and must not be represented as current production verification.
-- Automated repository, rules, and ordering tests are not physical cross-device validation. No live multi-device or production browser claim was made in Pass 5.
+- No Codex ingestion commit, push, Secret Manager configuration, deployment, or production ingestion verification is recorded at this point in the release process.
+- Automated tests and focused source review do not prove the new HTTPS endpoint is configured or live. The ingestion deployment and synthetic idempotency check must be recorded separately if they succeed later.
+- Automated repository, rules, and ordering tests are not physical cross-device validation.
 
 ## Remediation Pass 4 — seven final-review findings
 
@@ -36,29 +37,38 @@ Focused observations were also closed: `GitHubSyncPanel` remounts its state when
 3. **Observable Quick Capture acceptance:** `runQuickCapture` now returns an awaited `MutationResult`, validates without throwing, rejects not-ready/auth-transition no-ops before reduction or persistence, and reports storage failures explicitly. The dialog disables Save while data is not ready but still checks the returned result to close the race; it preserves the exact draft and error on failure and clears/closes or reports `Saved` only for `{ ok: true }`.
 4. **Fatal GitHub enrichment rate exhaustion:** authoritative rate-limit responses are latched with the best known reset/remaining/limit metadata. Pull, commit, and safe-config enrichment propagate `rate_limited`; bounded workers stop scheduling new work after exhaustion, wait only for already-started calls, and abort before partial persistence or first-import gates. Manual callers retain the sanitized `resource-exhausted` contract, while failed manual and scheduled attempts release lease state and never mark synchronization successful.
 
+## Automatic Codex session ingestion release candidate
+
+1. **Owner-scoped HTTPS boundary:** `ingestCodexSession` is a Firebase Functions v2 `onRequest` export in `us-east4`. It accepts POST only, uses a purpose-limited `CODEX_INGEST_TOKEN` bearer credential from Secret Manager, derives the write owner only from `DASHBOARD_OWNER_UID`, disables CORS, and returns sanitized no-store responses without logging request content or credentials.
+2. **Strict V1 contract and matching:** bounded Zod validation preserves authored text, rejects unsupported schemas, unreasonable payloads, and credential-shaped or configured-secret content. Project resolution uses explicit Dashboard UUID, immutable GitHub numeric repository ID, or exact normalized GitHub full name in that order. V1 does not fuzzy-match titles, resolve local paths, create projects, or accept caller-selected UIDs.
+3. **Atomic and idempotent persistence:** deterministic IDs and a transactionally checked receipt make ambiguous-response retries safe. One Firestore transaction creates exactly one completed DevelopmentSession, one used CodexPrompt, one primary `session_completed` ActivityEvent, bounded Codex Ideas, the receipt, one per-minute throttle update, and permitted project-continuity changes. A changed payload under the same project/session identity conflicts without rewriting prior records.
+4. **Additive ownership:** project recency advances monotonically. Objective, blocker, and next-step values update only when initially blank with no prior Codex ownership or still equal the last Codex-owned value. Observed manual edits, clears, or deletions receive a permanent backend-only manual-divergence marker. Ingestion never owns project purpose, status, manual status, current branch, tasks, existing ideas, notes, scratchpads, or architecture-decision records; GitHub synchronization remains facts-only.
+5. **Reusable helper and UI provenance:** `tools/report-codex-session.mjs` accepts a JSON file or stdin, reads only `DEVELOPER_DASHBOARD_CODEX_INGEST_URL` and `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN`, never accepts a credential argument, sends the original JSON body over HTTPS, validates the complete success envelope and session identity, and emits only fixed sanitized failures. Development Sessions and Codex Prompts expose compact Codex source/session provenance, while resume and AI-context generators include the ingested semantic context.
+6. **Focused blocker review:** backend, domain/UI, and helper/security/rules/documentation reviewers completed a read-only feature review after the corrective tests. Result: P0 none, P1 none, P2 none.
+
 ## Current local validation
 
-Remediation Pass 5 validation completed locally on 2026-08-11:
+Automatic Codex session ingestion release-candidate validation completed locally on 2026-08-11:
 
-- Focused root integration tests: exit 0; 5 files and 125 tests passed.
-- Final corrective recovery-projection tests: exit 0; 2 files and 76 tests passed after adding the deterministic mutation A -> stale snapshot S -> mutation B queue-drain regression.
-- Focused Functions enrichment tests: exit 0; 2 compiled files representing 43 source test cases passed.
+- Focused root feature tests: exit 0; 5 files and 58 tests passed.
+- Focused Functions feature tests: exit 0; 2 compiled test files representing 20 source test cases passed.
 - Root `npm run lint`: exit 0; 0 errors and 1 existing `@next/next/no-img-element` warning.
 - Root `npm run typecheck`: exit 0.
-- Root `npm test`: exit 0 on the final tree; 19 test files and 236 tests passed, with the separate 7-case Firestore rules file skipped in this non-emulator run (20 files and 243 cases total).
-- Root `npm run test:rules`: exit 0; all 7 Firestore emulator tests passed.
-- Root `npm run build`: exit 0; Next.js 16.3.0 production build completed and all listed application routes generated successfully.
+- Root `npm test`: exit 0; 21 test files passed and 1 rules file was skipped in the non-emulator run; 254 tests passed and 8 were skipped (262 total).
+- Root `npm run test:rules`: exit 0; 1 Firestore emulator test file and all 8 tests passed.
+- Root `npm run build`: exit 0; Next.js 16.3.0 production build completed and 9 of 9 application pages generated successfully.
 - Root `npm audit --omit=dev`: exit 0; `found 0 vulnerabilities`.
 - Root `npm audit`: exit 0; `found 0 vulnerabilities`.
 - Functions `npm run lint`: exit 0; the existing Next.js pages-directory rule notice was emitted.
 - Functions `npm run typecheck`: exit 0.
-- Functions `npm test`: exit 0; all 5 compiled test files passed, representing 71 source test cases.
+- Functions `npm test`: exit 0; all 7 compiled test files passed, representing 91 source test cases.
 - Functions `npm run build`: exit 0.
 - Functions `npm audit --omit=dev`: exit 1; 9 moderate, 0 high, and 0 critical vulnerabilities in the transitive `uuid` chain.
-- Functions `npm audit`: exit 1; the same 9 moderate, 0 high, and 0 critical vulnerabilities.
-- `git diff --check`: exit 0 after the final documentation update.
+- Functions `npm audit`: exit 1; 8 moderate, 0 high, and 0 critical vulnerabilities in the same transitive `uuid` advisory chain.
+- Focused read-only P0/P1/P2 review: no blockers found.
+- Markdown structure/reference sanity checks and `git diff --check`: exit 0 after the operational documentation update.
 
-Non-failing console noise consisted of existing React test-environment `act(...)` warnings, the Firestore IndexedDB deprecation notice, Firebase CLI `punycode` deprecation output, expected rules-denial logs, and the lint notices above. No assertion was weakened or skipped to obtain these results.
+Non-failing console noise consisted of existing React test-environment `act(...)` warnings, expected Firestore rules-denial logs, the Firebase CLI `punycode` deprecation notice, and the lint notices above. No assertion was weakened or skipped to obtain these results.
 
 ## Historical operational record — 2026-08-06
 

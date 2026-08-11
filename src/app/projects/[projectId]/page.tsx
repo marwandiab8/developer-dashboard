@@ -89,13 +89,27 @@ export default function ProjectWorkbenchPage() {
   const projectIdeas = data.ideas.filter((item) => item.projectId === projectId);
   const projectTasks = data.tasks.filter((item) => item.projectId === projectId);
   const projectBrainDumps = data.brainDumps.filter((item) => item.projectId === projectId);
-  const projectSessions = data.developmentSessions.filter((item) => item.projectId === projectId);
+  const projectSessions = data.developmentSessions
+    .filter((item) => item.projectId === projectId)
+    .sort(
+      (a, b) =>
+        new Date(b.endedAt ?? b.startedAt).getTime()
+        - new Date(a.endedAt ?? a.startedAt).getTime(),
+    );
   const projectDecisions = data.architectureDecisions.filter((item) => item.projectId === projectId);
-  const projectPrompts = data.codexPrompts.filter((item) => item.projectId === projectId);
+  const projectPrompts = data.codexPrompts
+    .filter((item) => item.projectId === projectId)
+    .sort(
+      (a, b) =>
+        new Date(b.lastUsedAt ?? b.updatedAt).getTime()
+        - new Date(a.lastUsedAt ?? a.updatedAt).getTime(),
+    );
   const projectNotes = data.notes.filter((item) => item.projectId === projectId);
   const projectLinks = data.importantLinks.filter((item) => item.projectId === projectId);
   const projectActivity = data.activities.filter((item) => item.projectId === projectId);
   const activeSession = projectSessions.find((session) => session.status === "active");
+  const latestSession = projectSessions[0];
+  const continuitySession = activeSession ?? latestSession;
 
   const scratchpadText = project ? getProjectScratchpad(projectId)?.markdown || "" : "";
   const resumeText = useMemo(
@@ -700,6 +714,18 @@ export default function ProjectWorkbenchPage() {
                 <p className="text-xs text-slate-500">
                   {session.status} • started {toDisplayDate(session.startedAt)} • completed {toDisplayDate(session.endedAt || undefined)}
                 </p>
+                {session.source === "codex" ? (
+                  <p className="text-xs text-sky-700">
+                    Source: Codex{session.externalSessionId ? ` • ${session.externalSessionId}` : ""}
+                  </p>
+                ) : null}
+                {session.summary ? <p className="mt-1 text-sm text-slate-700">{session.summary}</p> : null}
+                {session.branch ? (
+                  <p className="text-xs text-slate-500">Branch: {session.branch}</p>
+                ) : null}
+                {session.commits.length > 0 ? (
+                  <p className="text-xs text-slate-500">Commits: {session.commits.join(", ")}</p>
+                ) : null}
                 <textarea
                   defaultValue={session.notes}
                   onBlur={(event) => appendSessionNote(session.id, event.target.value)}
@@ -803,7 +829,11 @@ export default function ProjectWorkbenchPage() {
               </div>
               <p className="text-sm text-slate-600">{prompt.purpose}</p>
               <p className="mt-1 text-sm whitespace-pre-line">{prompt.prompt}</p>
-              <p className="text-xs text-slate-500">Status {prompt.status}</p>
+              <p className="text-xs text-slate-500">
+                Status {prompt.status}
+                {prompt.source === "codex" ? " • Source: Codex" : ""}
+                {prompt.externalSessionId ? ` • ${prompt.externalSessionId}` : ""}
+              </p>
               <div className="mt-2 flex gap-2">
                 <button className="rounded border px-2 py-1 text-xs" onClick={() => markPromptUsed(prompt.id, prompt.resultSummary || "Used from UI")}>Mark used</button>
                 <button className="rounded border px-2 py-1 text-xs" onClick={() => {
@@ -1057,7 +1087,7 @@ export default function ProjectWorkbenchPage() {
             </p>
             <p>
               <span className="font-medium">Last session starting point:</span>{" "}
-              {activeSession?.nextStartingPoint || "No prior session"}
+              {continuitySession?.nextStartingPoint || "No prior session"}
             </p>
           </div>
         </section>

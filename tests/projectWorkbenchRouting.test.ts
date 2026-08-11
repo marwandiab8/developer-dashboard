@@ -52,6 +52,7 @@ vi.mock("../src/components/GitHubSyncPanel", () => ({
 import DashboardPage from "../src/app/page";
 import ProjectWorkbenchPage from "../src/app/projects/[projectId]/page";
 import ProjectsPage from "../src/app/projects/page";
+import SessionsPage from "../src/app/sessions/page";
 
 function makeDashboardFixture(data: DashboardData) {
   return {
@@ -201,6 +202,79 @@ describe("project workbench route resolution", () => {
         .toBe(`/projects/${project.id}?section=workbench`);
     } finally {
       dashboardView.close();
+    }
+  });
+
+  it("sorts automatic sessions and prompts and uses the latest completed session for continuity", () => {
+    const data = seedDashboardData();
+    const project = data.projects[0];
+    const ingestedSession = {
+      ...data.developmentSessions[0],
+      id: "dddddddd-1111-4111-8111-111111111112",
+      startedAt: "2026-08-11T12:00:00.000Z",
+      endedAt: "2026-08-11T13:00:00.000Z",
+      objective: "Automatic Codex handoff",
+      summary: "Stored the semantic session context.",
+      source: "codex" as const,
+      externalSessionId: "codex-session-42",
+      branch: "feature/codex-ingestion",
+      commits: ["abc1234"],
+      nextStartingPoint: "Configure the helper in another repository",
+    };
+    const ingestedPrompt = {
+      ...data.codexPrompts[0],
+      id: "eeeeeeee-1111-4111-8111-111111111112",
+      title: "Latest automatic prompt",
+      source: "codex" as const,
+      externalSessionId: "codex-session-42",
+      relatedSessionId: ingestedSession.id,
+      updatedAt: "2026-08-11T13:00:00.000Z",
+      lastUsedAt: "2026-08-11T13:00:00.000Z",
+    };
+    data.developmentSessions = [data.developmentSessions[0], ingestedSession];
+    data.codexPrompts = [data.codexPrompts[0], ingestedPrompt];
+    dashboardFixture.current = makeDashboardFixture(data);
+    navigationFixture.useParams.mockReturnValue({ projectId: project.id });
+    navigationFixture.pathname = `/projects/${project.id}`;
+
+    const workbenchView = mount(ProjectWorkbenchPage);
+    try {
+      expect(workbenchView.container.textContent).toContain(
+        "Configure the helper in another repository",
+      );
+      expect(workbenchView.container.textContent).toContain("Latest automatic prompt");
+    } finally {
+      workbenchView.close();
+    }
+
+    navigationFixture.searchParams = new URLSearchParams("section=sessions");
+    const sessionView = mount(ProjectWorkbenchPage);
+    try {
+      expect(sessionView.container.textContent).toContain("Source: Codex");
+      expect(sessionView.container.textContent).toContain("codex-session-42");
+      expect(sessionView.container.textContent).toContain("feature/codex-ingestion");
+      expect(sessionView.container.textContent).toContain("abc1234");
+    } finally {
+      sessionView.close();
+    }
+
+    navigationFixture.searchParams = new URLSearchParams("section=codex-prompts");
+    const promptView = mount(ProjectWorkbenchPage);
+    try {
+      expect(promptView.container.textContent).toContain("Latest automatic prompt");
+      expect(promptView.container.textContent).toContain("Source: Codex");
+      expect(promptView.container.textContent).toContain("codex-session-42");
+    } finally {
+      promptView.close();
+    }
+
+    const sessionsPageView = mount(SessionsPage);
+    try {
+      expect(sessionsPageView.container.textContent).toContain("Source: Codex");
+      expect(sessionsPageView.container.textContent).toContain("codex-session-42");
+      expect(sessionsPageView.container.textContent).toContain("abc1234");
+    } finally {
+      sessionsPageView.close();
     }
   });
 });

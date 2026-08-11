@@ -116,6 +116,7 @@ export interface Idea {
   status: IdeaStatus;
   priority: IdeaPriority;
   source: IdeaSource;
+  externalSessionId?: string;
   tags: string[];
   linkedTaskId: string | null;
   createdAt: string;
@@ -180,6 +181,9 @@ export interface CodexPrompt {
   resultSummary: string;
   status: PromptStatus;
   relatedTaskId: string | null;
+  relatedSessionId?: string | null;
+  source?: "codex";
+  externalSessionId?: string;
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
@@ -215,6 +219,12 @@ export interface DevelopmentSession {
   endedAt: string | null;
   objective: string;
   summary: string;
+  source?: "codex";
+  externalSessionId?: string;
+  branch?: string;
+  completedItems?: string[];
+  unfinishedItems?: string[];
+  currentBlocker?: string;
   tasksWorkedOn: string[];
   tasksCompleted: string[];
   ideasAdded: string[];
@@ -236,6 +246,8 @@ export interface ActivityEvent {
   entityType: string;
   entityId: string;
   metadata: string;
+  source?: "codex";
+  externalSessionId?: string;
   createdAt: string;
 }
 

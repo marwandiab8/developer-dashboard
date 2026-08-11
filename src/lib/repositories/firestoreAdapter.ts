@@ -216,7 +216,7 @@ export const mapProject = (id: string, snapshot: SnapshotRecord): Project | null
     },
   );
 
-const mapIdea = (id: string, snapshot: SnapshotRecord): Idea | null =>
+export const mapIdea = (id: string, snapshot: SnapshotRecord): Idea | null =>
   parseIfValid<Idea>(
     "idea",
     {
@@ -227,6 +227,9 @@ const mapIdea = (id: string, snapshot: SnapshotRecord): Idea | null =>
       status: asString(snapshot.status),
       priority: asString(snapshot.priority),
       source: asString(snapshot.source),
+      ...(asString(snapshot.externalSessionId)
+        ? { externalSessionId: asString(snapshot.externalSessionId) }
+        : {}),
       tags: toStringArray(snapshot.tags),
       linkedTaskId: asNullableString(snapshot.linkedTaskId),
       createdAt: toIsoString(snapshot.createdAt),
@@ -299,7 +302,7 @@ const mapArchitectureDecision = (id: string, snapshot: SnapshotRecord): Architec
     },
   );
 
-const mapCodexPrompt = (id: string, snapshot: SnapshotRecord): CodexPrompt | null =>
+export const mapCodexPrompt = (id: string, snapshot: SnapshotRecord): CodexPrompt | null =>
   parseIfValid<CodexPrompt>(
     "codexPrompt",
     {
@@ -311,6 +314,15 @@ const mapCodexPrompt = (id: string, snapshot: SnapshotRecord): CodexPrompt | nul
       resultSummary: asAuthoredString(snapshot.resultSummary),
       status: asString(snapshot.status),
       relatedTaskId: asNullableString(snapshot.relatedTaskId),
+      ...(snapshot.relatedSessionId === null
+        ? { relatedSessionId: null }
+        : asString(snapshot.relatedSessionId)
+          ? { relatedSessionId: asString(snapshot.relatedSessionId) }
+          : {}),
+      ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      ...(asString(snapshot.externalSessionId)
+        ? { externalSessionId: asString(snapshot.externalSessionId) }
+        : {}),
       createdAt: toIsoString(snapshot.createdAt),
       updatedAt: toIsoString(snapshot.updatedAt),
       lastUsedAt: snapshot.lastUsedAt ? toIsoString(snapshot.lastUsedAt) : null,
@@ -348,7 +360,7 @@ const mapLink = (id: string, snapshot: SnapshotRecord): ImportantLink | null =>
     },
   );
 
-const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSession | null =>
+export const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSession | null =>
   parseIfValid<DevelopmentSession>(
     "session",
     {
@@ -358,6 +370,20 @@ const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSession | 
       endedAt: snapshot.endedAt ? toIsoString(snapshot.endedAt) : null,
       objective: asAuthoredString(snapshot.objective),
       summary: asAuthoredString(snapshot.summary),
+      ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      ...(asString(snapshot.externalSessionId)
+        ? { externalSessionId: asString(snapshot.externalSessionId) }
+        : {}),
+      ...(asString(snapshot.branch) ? { branch: asString(snapshot.branch) } : {}),
+      ...(Array.isArray(snapshot.completedItems)
+        ? { completedItems: toStringArray(snapshot.completedItems) }
+        : {}),
+      ...(Array.isArray(snapshot.unfinishedItems)
+        ? { unfinishedItems: toStringArray(snapshot.unfinishedItems) }
+        : {}),
+      ...(typeof snapshot.currentBlocker === "string"
+        ? { currentBlocker: asAuthoredString(snapshot.currentBlocker) }
+        : {}),
       tasksWorkedOn: toStringArray(snapshot.tasksWorkedOn),
       tasksCompleted: toStringArray(snapshot.tasksCompleted),
       ideasAdded: toStringArray(snapshot.ideasAdded),
@@ -372,7 +398,7 @@ const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSession | 
     },
   );
 
-const mapActivity = (id: string, snapshot: SnapshotRecord): ActivityEvent | null =>
+export const mapActivity = (id: string, snapshot: SnapshotRecord): ActivityEvent | null =>
   parseIfValid<ActivityEvent>(
     "activity",
     {
@@ -383,6 +409,10 @@ const mapActivity = (id: string, snapshot: SnapshotRecord): ActivityEvent | null
       entityType: asString(snapshot.entityType),
       entityId: asString(snapshot.entityId),
       metadata: asAuthoredString(snapshot.metadata),
+      ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      ...(asString(snapshot.externalSessionId)
+        ? { externalSessionId: asString(snapshot.externalSessionId) }
+        : {}),
       createdAt: toIsoString(snapshot.createdAt),
     },
   );

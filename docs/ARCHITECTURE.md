@@ -16,16 +16,30 @@ Developer Dashboard is a personal external development brain. GitHub repositorie
 - Firebase Functions callable client in region us-east4
 - No GitHub token, owner UID secret, GitHub API request, or direct privileged Firestore write
 
+### Local Codex reporting helper
+
+- Runs from the developer's machine after an opted-in Codex session
+- Reads a prepared V1 JSON report without rewriting its authored content
+- Reads the HTTPS endpoint and purpose-limited ingestion credential from process environment
+- Sends `Authorization: Bearer` only to the configured HTTPS endpoint
+- Holds no Firebase Admin credential, service-account key, owner UID, or GitHub credential
+- Reports a sanitized failure without undoing or changing the coding work
+
 ### Firebase Functions v2
 
 - getGitHubConnectionStatus callable
 - syncGitHubRepositories callable
 - scheduledSyncGitHubRepositories scheduled function
+- ingestCodexSession HTTPS endpoint
 - Firebase Auth verification and owner UID enforcement
-- Secret Manager access
+- Separate Firebase Auth and purpose-limited ingestion authentication boundaries
+- Secret Manager access scoped to each Function's required values
 - GitHub API pagination, normalization, enrichment, and rate-limit handling
 - Centralized GitHub import contract application
 - Firestore lease, state, audit, project, and activity writes
+- Transactional Codex session, prompt, activity, idea, receipt, and guarded continuity writes
+
+`ingestCodexSession` is an us-east4 v2 `onRequest` Function with CORS disabled, a 60-second timeout, 256 MiB memory, maximum two instances, and only the ingestion-token and owner-UID secret bindings.
 
 ### GitHub
 
@@ -42,7 +56,7 @@ All GitHub synchronization data is scoped below:
 
 Projects continue to use the existing user-scoped repository architecture. Synchronization control state and audit information are stored separately enough to recover from a partial run without corrupting project content.
 
-Browser-writable Dashboard collections and migration/profile records are explicitly allowlisted by security rules. GitHub synchronization state, leases, gates, and audit runs are backend-controlled; browser clients cannot write those paths. Admin SDK Functions bypass client rules and remain responsible for backend state.
+Browser-writable Dashboard collections and migration/profile records are explicitly allowlisted by security rules. GitHub synchronization state, leases, gates, and audit runs are backend-controlled. Codex ingestion receipts, throttle state, and continuity ownership records are also backend-controlled. Browser clients cannot read or write those paths. Admin SDK Functions bypass client rules and remain responsible for backend state.
 
 Realtime listeners are the authoritative cloud hydration stream. The Firestore adapter subscription does not start an independent bootstrap load; the provider subscribes before its optional guarded load. Listener snapshots have monotonic repository versions, bootstrap loads cannot replace an accepted listener snapshot, and writes do not perform an unguarded post-write full reload. While dependent projected actions finish, only the newest versioned deferred snapshot is retained and it becomes authoritative afterward; successive non-deferred snapshots advance in arrival order. This ordering is covered by deterministic automated tests; it was not physically reverified across devices in this remediation.
 
@@ -78,6 +92,19 @@ Session-note appends retain their nested atomic receipt and serialized note-appe
 5. When configured, the backend performs only the minimum safe connection or rate-limit check needed.
 6. Callable returns safe connection, last-success, lease, and rate-limit metadata.
 
+## Codex session ingestion flow
+
+1. An opted-in Codex session prepares a strict V1 JSON report and invokes the shared helper.
+2. The helper sends one HTTPS POST with the purpose-limited bearer credential. It never accepts that credential as a command argument.
+3. `ingestCodexSession` authenticates the credential with a constant-time comparison and derives the target UID only from `DASHBOARD_OWNER_UID`.
+4. Validation rejects an unsupported schema, excessive payload, embedded credential material, or malformed content before any write.
+5. The backend resolves one existing project by explicit Dashboard UUID, immutable GitHub numeric ID, or exact normalized GitHub full name. Local-path matching, fuzzy title matching, and automatic project creation are not part of V1.
+6. A deterministic receipt identity combines source, resolved project, and external session ID. A matching receipt returns the original result; a changed payload under the same identity is an idempotency conflict.
+7. One Firestore transaction writes the completed DevelopmentSession, used CodexPrompt, one primary session-completed ActivityEvent, bounded Codex ideas, receipt, throttle state, and any ownership-safe continuity updates.
+8. The browser's existing realtime repository stream hydrates those normal Dashboard entities into the Workbench, Development Sessions, Codex Prompts, Activity, PROJECT_RESUME.md, and AI_CONTEXT.md.
+
+The endpoint allows at most 30 new ingestions per owner per UTC minute. An already-received idempotent retry is checked first and does not consume that allowance.
+
 ## On-demand synchronization flow
 
 1. Browser invokes syncGitHubRepositories with no authoritative UID.
@@ -108,7 +135,7 @@ A successful scheduled run permanently records its day in `lastSuccessfulSchedul
 
 Historical evidence in `CODEX_STATUS.md` records this scheduler as deployed and enabled on 2026-08-06. That remote state was not reverified during the current remediation. Any new deployment still requires explicit approval.
 
-## Authentication boundary
+## GitHub callable authentication boundary
 
 On-demand requests require:
 
@@ -119,11 +146,21 @@ Missing authentication returns unauthenticated. Any other authenticated UID retu
 
 Security rules remain a second boundary. Backend writes remain explicitly limited to the configured users/{uid} path.
 
+## Codex ingestion authentication boundary
+
+`ingestCodexSession` is not a browser callable. It accepts only POST and requires `Authorization: Bearer` with `CODEX_INGEST_TOKEN`. The Function also binds `DASHBOARD_OWNER_UID`, derives every write path from that server-side value, and accepts no caller-supplied UID as authority. The ingestion credential grants access only to this bounded ingestion operation; it is not a Firebase Admin, Firestore, GitHub, or service-account credential.
+
+The token, authorization header, owner UID, full request body, and raw errors are excluded from logs and responses. Missing or invalid authentication receives a sanitized response and performs no project lookup or write.
+
 ## Import and merge boundary
 
 The backend must import the central contract rather than reimplement field ownership. GitHub may update only namespaced source data and calculated external activity. Manual fields and all workbench entities remain protected.
 
 Repositories that disappear or become inaccessible are never deleted. Existing projects remain usable and may carry unavailable synchronization status.
+
+GitHub synchronization remains facts-only and cannot overwrite Codex or manual continuity fields. Codex ingestion adds sessions, prompts, activity, and explicitly reported ideas. It does not create or update tasks or architecture-decision records, and it does not modify project purpose, status, manual status, branch, or unrelated entities.
+
+Project objective, blocker, and next recommended task use a separate backend ownership record. An explicit Codex value may fill an initially blank field with no prior Codex ownership or replace the exact value last written by Codex. A later manual edit, clear, or deletion breaks that ownership match and is preserved; once observed, a manual-divergence marker prevents stale Codex ownership from being reclaimed even if the user later chooses the old text again. Omitted values never blank a field. Blocker clearing is allowed only for an initially blank field or an unchanged Codex-owned blocker; it cannot clear a manual blocker. Per-field ownership time and project recency advance monotonically from the session end time.
 
 ## Pagination and concurrency
 

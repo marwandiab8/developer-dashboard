@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   activityEventSchema,
+  codexPromptSchema,
   dashboardDataSchema,
+  developmentSessionSchema,
   externalProjectSourceGithubSchema,
+  ideaSchema,
   quickCaptureSchema,
 } from "../src/lib/validation";
 import { seedDashboardData } from "../src/lib/seed";
@@ -112,5 +115,89 @@ describe("quickCaptureSchema", () => {
   it("validates the seeded dashboard payload", () => {
     const seeded = seedDashboardData();
     expect(() => dashboardDataSchema.parse(seeded)).not.toThrow();
+  });
+});
+
+describe("Codex-ingested domain metadata", () => {
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  const sessionId = "aaaaaaaa-1111-4111-8111-111111111112";
+  const externalSessionId = "codex:session/2026-08-11_01";
+
+  it("accepts backward-compatible source metadata and semantic session fields", () => {
+    const session = developmentSessionSchema.parse({
+      id: sessionId,
+      projectId,
+      startedAt: "2026-08-11T12:00:00.000Z",
+      endedAt: "2026-08-11T13:00:00.000Z",
+      objective: "Implement automatic ingestion",
+      summary: "The endpoint and helper were completed.",
+      source: "codex",
+      externalSessionId,
+      branch: "feature/codex-ingestion",
+      completedItems: ["Added an authenticated endpoint"],
+      unfinishedItems: ["Configure the helper elsewhere"],
+      currentBlocker: "None",
+      tasksWorkedOn: [],
+      tasksCompleted: [],
+      ideasAdded: [],
+      problemsDiscovered: ["Retries need a receipt"],
+      decisionsMade: ["Use deterministic IDs"],
+      promptsUsed: [],
+      filesModified: ["functions/src/index.ts"],
+      commits: ["abc123"],
+      nextStartingPoint: "Configure another project",
+      status: "completed",
+      notes: "Preserve the complete session context.",
+    });
+
+    const prompt = codexPromptSchema.parse({
+      id: "bbbbbbbb-1111-4111-8111-111111111112",
+      projectId,
+      title: "Automatic ingestion",
+      purpose: session.objective,
+      prompt: "  Preserve this complete prompt.\n",
+      resultSummary: session.summary,
+      status: "used",
+      relatedTaskId: null,
+      relatedSessionId: session.id,
+      source: "codex",
+      externalSessionId,
+      createdAt: session.startedAt,
+      updatedAt: session.endedAt,
+      lastUsedAt: session.endedAt,
+    });
+
+    const idea = ideaSchema.parse({
+      id: "cccccccc-1111-4111-8111-111111111112",
+      projectId,
+      text: "Reuse the helper from other repositories",
+      description: "Keep credentials outside Git.",
+      status: "inbox",
+      priority: "medium",
+      source: "Codex",
+      externalSessionId,
+      tags: [],
+      linkedTaskId: null,
+      createdAt: session.endedAt,
+      updatedAt: session.endedAt,
+    });
+
+    expect(session.completedItems).toEqual(["Added an authenticated endpoint"]);
+    expect(prompt.prompt).toBe("  Preserve this complete prompt.\n");
+    expect(prompt.relatedSessionId).toBe(session.id);
+    expect(idea.source).toBe("Codex");
+  });
+
+  it("rejects unsafe external session IDs and unbounded semantic arrays", () => {
+    const seeded = seedDashboardData().developmentSessions[0];
+    expect(() => developmentSessionSchema.parse({
+      ...seeded,
+      source: "codex",
+      externalSessionId: "contains\na newline",
+    })).toThrow("Invalid external session ID");
+    expect(() => developmentSessionSchema.parse({
+      ...seeded,
+      completedItems: Array.from({ length: 101 }, (_, index) => `item-${index}`),
+    })).toThrow();
   });
 });

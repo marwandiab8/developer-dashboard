@@ -4,7 +4,11 @@ import { SCHEMA_VERSION } from "../src/lib/constants";
 import {
   CloudMutationConflictError,
   createFirestoreRepository,
+  mapActivity,
+  mapCodexPrompt,
+  mapIdea,
   mapProject,
+  mapSession,
 } from "../src/lib/repositories/firestoreAdapter";
 import { createCloudMutationContract } from "../src/lib/repositories/cloudMutationContract";
 import { dashboardReducer } from "../src/lib/repositories/reducer";
@@ -298,6 +302,56 @@ describe("firestore adapter ownership", () => {
 });
 
 describe("firestore adapter import behavior", () => {
+  it("hydrates Codex source metadata and authored session context without trimming it", () => {
+    const seeded = seedDashboardData();
+    const externalSessionId = "codex:session/2026-08-11_01";
+    const session = mapSession(seeded.developmentSessions[0].id, {
+      ...seeded.developmentSessions[0],
+      source: "codex",
+      externalSessionId,
+      branch: "feature/codex-ingestion",
+      completedItems: ["  completed with indentation\n"],
+      unfinishedItems: ["unfinished  "],
+      currentBlocker: "  blocker context\n",
+    });
+    const prompt = mapCodexPrompt(seeded.codexPrompts[0].id, {
+      ...seeded.codexPrompts[0],
+      source: "codex",
+      externalSessionId,
+      relatedSessionId: seeded.developmentSessions[0].id,
+      prompt: "  indented\n    child\n\n",
+    });
+    const idea = mapIdea(seeded.ideas[0].id, {
+      ...seeded.ideas[0],
+      source: "Codex",
+      externalSessionId,
+    });
+    const activity = mapActivity("dddddddd-1111-4111-8111-111111111112", {
+      projectId: seeded.projects[0].id,
+      type: "session_completed",
+      summary: "Codex session completed",
+      entityType: "session",
+      entityId: seeded.developmentSessions[0].id,
+      metadata: "{\"source\":\"codex\"}",
+      source: "codex",
+      externalSessionId,
+      createdAt: "2026-08-11T13:00:00.000Z",
+    });
+
+    expect(session).toMatchObject({
+      source: "codex",
+      externalSessionId,
+      branch: "feature/codex-ingestion",
+      completedItems: ["  completed with indentation\n"],
+      unfinishedItems: ["unfinished  "],
+      currentBlocker: "  blocker context\n",
+    });
+    expect(prompt?.prompt).toBe("  indented\n    child\n\n");
+    expect(prompt?.relatedSessionId).toBe(seeded.developmentSessions[0].id);
+    expect(idea?.externalSessionId).toBe(externalSessionId);
+    expect(activity).toMatchObject({ source: "codex", externalSessionId });
+  });
+
   it("maps GitHub project metadata losslessly without inventing manual activity", () => {
     const mapped = mapProject("90000000-0000-4000-8000-000000000090", {
       title: "Private workbench",

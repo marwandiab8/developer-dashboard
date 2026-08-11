@@ -4,7 +4,7 @@ Project: marwan-developer-dashboard
 
 Do not deploy any resource until current server-side configuration is verified without reading secret values and the exact deployment is explicitly approved.
 
-Historical evidence in `CODEX_STATUS.md` records both required Secret Manager versions as enabled on 2026-08-06 and records Functions, scheduler, and App Hosting deployments that day. This remediation did not reverify production or secret metadata.
+Historical evidence in `CODEX_STATUS.md` records the two GitHub synchronization Secret Manager values as enabled on 2026-08-06 and records Functions, scheduler, and App Hosting deployments that day. `CODEX_INGEST_TOKEN` did not exist in that historical check. This document does not claim that the new credential or endpoint is configured or deployed.
 
 ## Browser Firebase configuration
 
@@ -52,19 +52,28 @@ Never paste the token into Codex, chat, source code, a command argument, a test,
 
 The UID is an authorization identifier and operationally sensitive Secret Manager value. It is not the GitHub token, must not be logged or committed, and must not be replaced with an email address.
 
-## Store both server-side values interactively
+## Create the Codex ingestion credential
+
+Create a unique high-entropy credential with a trusted password manager or secret generator. It is a purpose-limited bearer credential for `ingestCodexSession`; it is not a GitHub token, Firebase ID token, service-account key, or Firebase Admin credential. Do not reuse another credential.
+
+Keep the value in a trusted local secret store so opted-in Codex sessions can supply it through `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN`. Do not store it in Developer Dashboard, another project repository, an `.env` file, shell history, chat, documentation, tests, or a command argument.
+
+## Store server-side values interactively
 
 Run these commands in a local terminal. Each command prompts securely for its value:
 
     cd /home/marwan/Documents/developer-dashboard
     firebase functions:secrets:set GITHUB_READ_TOKEN --project marwan-developer-dashboard
     firebase functions:secrets:set DASHBOARD_OWNER_UID --project marwan-developer-dashboard
+    firebase functions:secrets:set CODEX_INGEST_TOKEN --project marwan-developer-dashboard
 
 At the first prompt, paste the fine-grained GitHub token directly into the terminal prompt.
 
 At the second prompt, paste the Firebase Authentication UID copied from the Firebase Console.
 
-Do not place either value after the command on the command line. Do not add either value to .env.local, apphosting.yaml, Firestore, localStorage, or NEXT_PUBLIC variables.
+At the third prompt, paste the dedicated Codex ingestion credential directly into the terminal prompt.
+
+Do not place any value after a command on the command line. Do not add any value to `.env.local`, `apphosting.yaml`, Firestore, localStorage, or `NEXT_PUBLIC` variables.
 
 ## Functions
 
@@ -83,6 +92,28 @@ The prepared daily scheduled export is:
 
 The scheduled function uses DASHBOARD_OWNER_UID internally and shares the same lease as on-demand synchronization. Successful scheduled-day completion is recorded independently of later manual-run status; already-completed duplicate delivery skips without rewriting its original audit, while failed attempts may retry.
 
+The owner-scoped Codex ingestion HTTPS export is:
+
+- ingestCodexSession
+- Region: us-east4
+- Type: HTTPS `onRequest`; CORS disabled
+- Runtime limits: 60 seconds, 256 MiB, maximum two instances
+- Authentication: `Authorization: Bearer` using `CODEX_INGEST_TOKEN`
+- Owner path: derived only from `DASHBOARD_OWNER_UID`
+- Secret bindings: only `CODEX_INGEST_TOKEN` and `DASHBOARD_OWNER_UID`
+
+The endpoint accepts no Firebase Admin or service-account credential from a caller. Its exact V1 contract is in `docs/CODEX_SESSION_INGESTION.md`.
+
+## Configure the local helper
+
+After an approved deployment, set the Function URL and load the credential from a trusted local secret store into the current process environment:
+
+    export DEVELOPER_DASHBOARD_CODEX_INGEST_URL="<deployed-ingestCodexSession-https-url>"
+    read -rsp "Developer Dashboard Codex ingestion credential: " DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN
+    export DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN
+
+The secure prompt does not echo the value. Do not type the credential directly into an `export` command because that would place it in shell history. Another repository can then invoke the shared helper by absolute path; it does not need a copy of Developer Dashboard source.
+
 ## Configuration gate
 
-After either interactive command succeeds, confirm only that the value is configured. Do not reveal it. Configuration does not authorize deployment; follow the current validation and approval gates in `docs/DEPLOYMENT.md`.
+After each interactive command succeeds, confirm only that the value is configured. Do not reveal it. Configuration does not authorize deployment; follow the current validation and approval gates in `docs/DEPLOYMENT.md`.

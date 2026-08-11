@@ -14,6 +14,7 @@ Personal external development brain for fast idea capture, project continuity, a
 - PROJECT_RESUME.md and AI_CONTEXT.md generation
 - Firebase Authentication and user-scoped Firestore persistence
 - Secure server-side GitHub repository import and synchronization
+- Owner-scoped Codex session ingestion for prompts, sessions, activity, ideas, and continuity
 
 GitHub-backed projects remain normal dashboard workbenches. Synchronization adds namespaced source metadata without replacing protected manual project fields or related work.
 
@@ -35,9 +36,22 @@ A fine-grained token is limited to one selected resource owner. All repositories
 See:
 
 - docs/GITHUB_IMPORT_CONTRACT.md
+- docs/CODEX_SESSION_INGESTION.md
 - docs/SECURITY.md
 - docs/FIREBASE_SETUP.md
 - docs/DEPLOYMENT.md
+
+## Codex session ingestion
+
+The `ingestCodexSession` HTTPS Function accepts a bounded V1 session report from the shared local helper. It records semantic work context—why work happened, what Codex completed, what remains, and what should happen next—without replacing GitHub repository facts or unrelated Dashboard-owned data. Matching is exact and identity-based; V1 never fuzzy-matches a title or creates a project automatically.
+
+After the Function and its purpose-limited credential are configured, another repository can report a prepared JSON payload with:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs complete --file /path/to/codex-session.json
+
+The helper reads its endpoint and credential from `DEVELOPER_DASHBOARD_CODEX_INGEST_URL` and `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN`. Never put the credential in a command argument or repository file. See `docs/CODEX_SESSION_INGESTION.md` for the exact payload, setup, safety policy, and reusable `AGENTS.md` instruction.
+
+This capability does not make every Codex session automatic by itself. Each external project must opt in by configuring the environment and adopting the end-of-session instruction.
 
 ## Technology
 
@@ -60,6 +74,7 @@ See:
     npm test
     npm run test:rules
     npm run build
+    npm run report:codex-session -- complete --file /path/to/codex-session.json
 
 Functions and Firestore validation are documented in docs/SETUP.md.
 
@@ -67,6 +82,6 @@ Functions and Firestore validation are documented in docs/SETUP.md.
 
 Firebase Authentication, UID-scoped Firestore persistence, signed-out local mode, migration, App Hosting configuration, and owner-only GitHub synchronization are implemented in the current working tree. If browser storage rejects a local save, current-tab work stays visible across authentication reruns with an explicit not-durable warning and the Dashboard remains usable. Guarded cloud-recovery replay refuses to overwrite later remote edits, including remote-only fields before a whole-document delete. Authored prose/Markdown is not trimmed by capture, reducer, persistence, or hydration paths. The first successful owner-triggered manual import enables later scheduled synchronization; successful scheduled-day completion is independent of later manual status and prevents duplicate same-day delivery from rewriting its audit.
 
-The GitHub `main` branch is stale and does not yet contain this working tree. Historical records show that Functions, the scheduler, and App Hosting were deployed on 2026-08-06, but production and physical cross-device/browser behavior were not reverified during the current remediation and must not be described as currently verified. No deployment is authorized by this document.
+The Firebase/GitHub release and project-workbench dynamic-route repair are on GitHub `main`. The production App Hosting routes and backend inventory were reverified on 2026-08-11; that automated evidence is not a substitute for authenticated physical cross-device acceptance. A changed working tree or documented capability is live only after its own deployment evidence is recorded. No deployment is authorized by this document.
 
 See `CODEX_STATUS.md` for the sole current operational record and the exact local validation evidence.

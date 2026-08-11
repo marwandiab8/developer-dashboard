@@ -1,12 +1,12 @@
 # Developer Dashboard Feature Compliance Matrix
 
-Date: 2026-08-10
+Date: 2026-08-11
 
 Status scale: Complete, Implemented locally, Partially implemented, Requires manual verification.
 
 ## Milestone 2 release gate
 
-The secure GitHub synchronization implementation, local-first fallback, atomic migration, and backend-only synchronization rules are present in the current working tree. Current local validation evidence belongs in `CODEX_STATUS.md`. GitHub `main` remains stale until this work is reviewed, committed, and pushed. Historical 2026-08-06 deployment and secret-metadata evidence is not a claim that production was reverified today, and it does not authorize another deployment.
+The secure GitHub synchronization implementation, local-first fallback, atomic migration, backend-only synchronization rules, and project-workbench route repair are released on GitHub `main`. Current validation and deployment evidence belongs in `CODEX_STATUS.md`; source text alone does not establish that a later feature is live. Production route/backend checks were performed on 2026-08-11, while authenticated physical cross-device acceptance remains manual. This document does not authorize another deployment.
 
 ## Compliance
 

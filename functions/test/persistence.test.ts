@@ -497,6 +497,8 @@ test("an external-only update cannot revert a manual edit made after the sync re
   const database = new FakeFirestore();
   const initialPayload = { ...initial } as StoredDocument;
   delete initialPayload.id;
+  initialPayload.currentBlocker = "Codex-owned blocker before synchronization";
+  initialPayload.nextRecommendedTask = "Codex-owned next step before synchronization";
   const projectPath = "users/owner/projects/project-1";
   database.documents.set(projectPath, initialPayload);
   database.afterProjectRead = () => {
@@ -504,6 +506,8 @@ test("an external-only update cannot revert a manual edit made after the sync re
     assert.ok(concurrent);
     concurrent.purpose = "manual purpose saved after synchronization read";
     concurrent.currentObjective = "manual objective saved after synchronization read";
+    concurrent.currentBlocker = "Codex continuity blocker saved after synchronization read";
+    concurrent.nextRecommendedTask = "Codex continuity next step saved after synchronization read";
     concurrent.lastWorkedAt = "2025-01-03T23:59:00.000Z";
   };
 
@@ -524,6 +528,8 @@ test("an external-only update cannot revert a manual edit made after the sync re
   assert.equal(counts.updated, 1);
   assert.equal(persisted.purpose, "manual purpose saved after synchronization read");
   assert.equal(persisted.currentObjective, "manual objective saved after synchronization read");
+  assert.equal(persisted.currentBlocker, "Codex continuity blocker saved after synchronization read");
+  assert.equal(persisted.nextRecommendedTask, "Codex continuity next step saved after synchronization read");
   assert.equal(persisted.lastWorkedAt, "2025-01-03T23:59:00.000Z");
   const github = (persisted.externalSources as { github: { description: string } }).github;
   assert.equal(github.description, "new GitHub description");
@@ -536,6 +542,8 @@ test("an external-only update cannot revert a manual edit made after the sync re
   assert.equal(writtenFields.some((field) => field.includes("firebaseAssociation")), false);
   assert.equal(writtenFields.includes("purpose"), false);
   assert.equal(writtenFields.includes("currentObjective"), false);
+  assert.equal(writtenFields.includes("currentBlocker"), false);
+  assert.equal(writtenFields.includes("nextRecommendedTask"), false);
   assert.equal(writtenFields.includes("lastWorkedAt"), false);
   assert.equal(writtenFields.includes("updatedAt"), false);
 });

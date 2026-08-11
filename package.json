@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "report:codex-session": "node tools/report-codex-session.mjs",
     "deploy": "npm run deploy:apphosting",
     "deploy:apphosting": "firebase deploy --only apphosting --force",
     "lint": "eslint",

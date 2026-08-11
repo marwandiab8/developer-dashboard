@@ -13,7 +13,7 @@ type SortableRecord = {
 };
 
 function dateOf<T extends SortableRecord>(item: T): number {
-  const date = item.updatedAt || item.createdAt || item.startedAt || item.endedAt || 0;
+  const date = item.updatedAt || item.createdAt || item.endedAt || item.startedAt || 0;
   return new Date(typeof date === "string" ? date : 0).getTime();
 }
 
@@ -25,6 +25,14 @@ function recent<T extends SortableRecord>(items: T[], limit = 8): T[] {
 
 function bullets(values: string[]): string {
   return values.length ? values.map((item) => `- ${item}`).join("\n") : "- None";
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function isMeaningfulBlocker(value: string): boolean {
+  return !/^(none|no blocker)\.?$/i.test(value.trim());
 }
 
 export function generateProjectResume(data: DashboardData, projectId: string): string {
@@ -43,6 +51,35 @@ export function generateProjectResume(data: DashboardData, projectId: string): s
   const completed = recent(tasks.filter((task) => task.status === "completed"));
   const blockers = tasks.filter((task) => task.status === "blocked");
   const futureIdeas = recent(ideas.filter((idea) => idea.status === "inbox" || idea.status === "reviewed"));
+  const recentSessions = recent(sessions);
+  const sessionCompleted = uniqueNonEmpty(
+    recentSessions.flatMap((session) => session.completedItems ?? []),
+  );
+  const sessionUnfinished = uniqueNonEmpty(
+    recentSessions.flatMap((session) => session.unfinishedItems ?? []),
+  );
+  const sessionProblems = uniqueNonEmpty(
+    recentSessions.flatMap((session) => [
+      ...session.problemsDiscovered,
+      ...(session.currentBlocker && isMeaningfulBlocker(session.currentBlocker)
+        ? [session.currentBlocker]
+        : []),
+    ]),
+  );
+  const sessionDecisions = uniqueNonEmpty(
+    recentSessions.flatMap((session) => session.decisionsMade),
+  );
+  const sessionFiles = uniqueNonEmpty(
+    recentSessions.flatMap((session) => session.filesModified),
+  );
+  const sessionCommits = uniqueNonEmpty(
+    recentSessions.flatMap((session) => session.commits),
+  );
+  const nextSteps = uniqueNonEmpty([
+    project.nextRecommendedTask,
+    ...recentSessions.map((session) => session.nextStartingPoint),
+    ...sessionUnfinished,
+  ]);
 
   return [
     "# PROJECT_RESUME.md",
@@ -63,10 +100,13 @@ export function generateProjectResume(data: DashboardData, projectId: string): s
     `Current objective: ${project.currentObjective || "Not defined"}`,
     "",
     "## What currently works",
-    bullets(completed.map((task) => task.title)),
+    bullets([...completed.map((task) => task.title), ...sessionCompleted]),
     "",
     "## What remains unfinished",
-    bullets(unfinished.map((task) => `${task.title} (${task.status})`)),
+    bullets([
+      ...unfinished.map((task) => `${task.title} (${task.status})`),
+      ...sessionUnfinished,
+    ]),
     "",
     "## Current blocker",
     project.currentBlocker || "None",
@@ -75,7 +115,10 @@ export function generateProjectResume(data: DashboardData, projectId: string): s
     inProgressTask ? `- ${inProgressTask.title}` : "- None",
     "",
     "## Recently completed work",
-    bullets(completed.map((task) => `${task.title} - ${formatDate(task.completedAt)} (${task.type})`)),
+    bullets([
+      ...completed.map((task) => `${task.title} - ${formatDate(task.completedAt)} (${task.type})`),
+      ...sessionCompleted,
+    ]),
     "",
     "## Current architecture decisions",
     bullets(recent(decisions).map((decision: ArchitectureDecision) => `${decision.title}: ${decision.decision}`)),
@@ -87,7 +130,23 @@ export function generateProjectResume(data: DashboardData, projectId: string): s
     bullets(recent(ideas).map((idea: Idea) => `${idea.text} [${idea.status}]`)),
     "",
     "## Recent sessions",
-    bullets(recent(sessions).map((session: DevelopmentSession) => `${session.objective} (${formatDate(session.startedAt)})`)),
+    bullets(recentSessions.map((session: DevelopmentSession) =>
+      `${session.objective} (${formatDate(session.startedAt)})${session.source === "codex" ? " [Codex]" : ""}${session.branch ? ` [branch ${session.branch}]` : ""}${session.summary ? ` — ${session.summary}` : ""}`)),
+    "",
+    "## Problems discovered during recent sessions",
+    bullets(sessionProblems),
+    "",
+    "## Implementation decisions from recent sessions",
+    bullets(sessionDecisions),
+    "",
+    "## Recently modified files",
+    bullets(sessionFiles),
+    "",
+    "## Recent commits",
+    bullets(sessionCommits),
+    "",
+    "## Next recommended work",
+    bullets(nextSteps),
     "",
     "## Future ideas",
     bullets(futureIdeas.map((idea) => idea.text)),

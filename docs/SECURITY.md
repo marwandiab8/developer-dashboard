@@ -1,4 +1,4 @@
-# GitHub synchronization security
+# GitHub synchronization and Codex ingestion security
 
 ## Trust boundaries
 
@@ -9,14 +9,23 @@ Browser:
 - Never receives or stores the GitHub token.
 - Never chooses an authoritative UID for backend writes.
 
+Local Codex reporting helper:
+
+- Reads a V1 JSON session report and posts it to the configured ingestion HTTPS URL.
+- Reads the purpose-limited credential from `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN`.
+- Never accepts the credential as a command-line argument or prints it, response bodies, or raw network errors.
+- Holds no Firebase Admin credential, service-account key, owner UID, or GitHub credential.
+
 Firebase Functions:
 
-- Verifies Firebase Authentication.
-- Enforces DASHBOARD_OWNER_UID.
+- GitHub callables verify Firebase Authentication and enforce DASHBOARD_OWNER_UID.
+- Codex ingestion derives its owner from DASHBOARD_OWNER_UID after separate bearer authentication.
 - Reads GITHUB_READ_TOKEN only from Secret Manager.
 - Calls GitHub with read-only permissions.
 - Writes only below users/{uid}.
 - Returns normalized metadata or safe summary information.
+- Authenticates `ingestCodexSession` separately with `CODEX_INGEST_TOKEN`.
+- Validates, matches, throttles, and transactionally persists bounded Codex session reports under the server-derived owner path.
 
 GitHub:
 
@@ -55,6 +64,7 @@ Secret Manager values:
 
 - GITHUB_READ_TOKEN
 - DASHBOARD_OWNER_UID
+- CODEX_INGEST_TOKEN
 
 Forbidden locations:
 
@@ -84,6 +94,26 @@ Every on-demand callable must:
 6. Ignore any caller-supplied UID as authority.
 
 Private repository metadata must be inaccessible to every non-owner Firebase user even if that user can authenticate successfully.
+
+The Codex HTTPS endpoint uses a separate machine-ingestion boundary:
+
+1. Accept POST only.
+2. Require `Authorization: Bearer` with `CODEX_INGEST_TOKEN`.
+3. Compare the supplied and configured credentials without a length-dependent plain-text comparison.
+4. Derive the write UID only from `DASHBOARD_OWNER_UID`.
+5. Reject missing or invalid authentication before project lookup or Firestore mutation.
+6. Return only the sanitized V1 response contract with `Cache-Control: no-store`.
+
+The ingestion credential authorizes only this endpoint. It does not grant direct Firestore, Firebase Admin, GitHub, deployment, or service-account access. Rotate it by creating a new Secret Manager version and redeploying only the bound Function; then remove the old local environment value. Never reuse the GitHub token for ingestion.
+
+## Codex payload safety
+
+- Both the raw request body and serialized validated payload are limited to 262,144 UTF-8 bytes.
+- Every string and array has a field-specific bound documented in `docs/CODEX_SESSION_INGESTION.md`.
+- Obvious embedded access tokens, private keys, authorization credentials, and service-account private-key material are rejected without echoing the match. The authenticated handler also rejects payload strings containing the configured ingestion credential or owner UID.
+- Unknown schema fields and unsupported schema versions are rejected.
+- Project resolution uses exact stable identities only. V1 does not fuzzy-match titles, resolve a local path, or create a project.
+- Thirty new ingestions per owner per UTC minute are permitted. An identical receipt-backed retry is checked first and does not consume the limit.
 
 ## Safe GitHub requests
 
@@ -141,6 +171,7 @@ Allowed operational data:
 - Lease result
 - Rate-limit limit, remaining, resource, and reset
 - Safe error category
+- Codex ingestion outcome and idea count
 
 Never log:
 
@@ -156,6 +187,9 @@ Never log:
 - Private repository descriptions
 - Raw upstream errors that may contain request data
 - Full callable request objects
+- Codex ingestion authorization headers or credential comparisons
+- Full Codex ingestion request bodies, prompts, summaries, file lists, or response bodies
+- Raw ingestion validation, matching, or persistence exceptions
 
 ## Error redaction
 
@@ -170,6 +204,8 @@ Callable errors use stable safe categories:
 - unavailable
 
 Only safe retry or reset timestamps may be included in error details. Raw GitHub messages are never forwarded.
+
+The Codex HTTPS endpoint uses the stable HTTP status and safe-code table in `docs/CODEX_SESSION_INGESTION.md`. It never forwards validation internals, matching data, payload excerpts, or raw persistence errors.
 
 ## Persistence safety
 
@@ -186,6 +222,10 @@ Only safe retry or reset timestamps may be included in error details. Raw GitHub
 - Preserve successful repository results during partial failures.
 - Keep successful scheduled-day completion independent of global last-run status and create immutable per-attempt audits atomically with run completion/failure.
 - Limit all writes to the verified owner's users/{uid} tree.
+- Use deterministic Codex entity IDs and a transactionally checked `codexIngestionReceipts` fingerprint. An identical retry returns the original result; a changed payload under the same project/session identity conflicts without rewriting data.
+- Commit the Codex session, prompt, one primary activity, bounded ideas, receipt, throttle state, and permitted continuity updates in one Firestore transaction.
+- Deny browser access to `codexIngestion`, `codexIngestionReceipts`, and `codexContinuity`. Visible sessions, prompts, activity, and ideas remain normal owner-editable Dashboard entities.
+- Allow Codex to fill objective, blocker, or next-step text only while it is initially blank with no prior Codex ownership, or replace it while it still matches its recorded Codex-owned hash. When a mismatch is observed, persist a backend-only manual-divergence marker so an old Codex hash cannot later reclaim the field. Preserve every later manual edit, clear, or deletion.
 
 ## Incident response
 
@@ -198,6 +238,14 @@ If token exposure is suspected:
 5. Do not paste the old or new token into an incident report.
 6. Redeploy only after explicit approval if a new secret binding or code release is required.
 
+If the Codex ingestion credential is exposed:
+
+1. Create a replacement Secret Manager version for `CODEX_INGEST_TOKEN` through a secure interactive prompt.
+2. Redeploy only `ingestCodexSession` after explicit approval so it binds the replacement.
+3. Remove the old value from every local shell or secret store and disable the exposed version.
+4. Review only sanitized ingestion counts and error categories for unexpected use.
+5. Do not paste either credential version or a captured authorization header into chat, source, tests, logs, or the incident report.
+
 ## Historical secret metadata verification
 
 Read-only Secret Manager metadata checks on 2026-08-06 confirmed:
@@ -207,6 +255,8 @@ Read-only Secret Manager metadata checks on 2026-08-06 confirmed:
 - No secret value was accessed, displayed, rotated, replaced, or copied.
 
 This historical check confirmed configuration presence only. It did not disclose or validate either stored value, and it was not rerun during the current remediation.
+
+`CODEX_INGEST_TOKEN` was not part of that historical check. Its configuration and deployment state must be recorded separately in `CODEX_STATUS.md`; this document makes no claim that it currently exists or that the ingestion endpoint is live.
 
 ## Dependency security disposition
 
@@ -223,17 +273,17 @@ The existing parent ranges accepted patched releases, so Pass 4 used the smalles
 - `js-yaml` 4.3.0 -> 4.3.1.
 - No override, forced audit fix, framework major, or React/Next change was required.
 
-Fresh post-fix results on 2026-08-10 are exact: root `npm audit --omit=dev` exited 0 with `found 0 vulnerabilities`, and root `npm audit` exited 0 with `found 0 vulnerabilities`.
+Fresh automatic Codex ingestion release-candidate results on 2026-08-11 are exact: root `npm audit --omit=dev` exited 0 with `found 0 vulnerabilities`, and root `npm audit` exited 0 with `found 0 vulnerabilities`.
 
 ### Firebase Functions
 
 The initial Functions audit traced high brace-expansion records at installed nodes 2.1.3 and 1.1.17, plus moderate ts-deepmerge, exclusively through the unused firebase-functions-test@3.5.0 development dependency. Removing that unused package removed 269 packages and eliminated those Functions dev-only advisories.
 
-Fresh sequential Pass 4 `npm audit --omit=dev` and full `npm audit` both report exactly 9 moderate, 0 high, and 0 critical vulnerabilities. They are the same underlying `uuid <11.1.1` advisory, GHSA-w5hq-g745-h8pq, counted through firebase-functions, firebase-admin, Firestore, google-gax, retry-request, gaxios, Storage, and teeny-request.
+Fresh sequential automatic Codex ingestion release-candidate audits on 2026-08-11 report no high or critical vulnerabilities. Functions `npm audit --omit=dev` reports exactly 9 moderate, 0 high, and 0 critical vulnerabilities; full Functions `npm audit` reports exactly 8 moderate, 0 high, and 0 critical vulnerabilities. npm reports different installed-edge totals between the two scopes, but every remaining record belongs to the same underlying `uuid <11.1.1` advisory, GHSA-w5hq-g745-h8pq, through firebase-functions, firebase-admin, Firestore, google-gax, retry-request, gaxios, Storage, and teeny-request.
 
 The affected uuid behavior requires v3, v5, or v6 with a caller-provided buffer. Reachability searches found only v4 calls in gaxios, google-gax, and teeny-request, no direct UUID use in functions/src, and no direct Storage use in functions/src. The vulnerable API is therefore production-installed but unreachable through the current application code.
 
-uuid 11.1.1 contains the fix. npm's final sequential audit output offers only `npm audit fix --force`, currently proposing an unsafe breaking downgrade from installed `firebase-admin@13.10.0` to 10.3.0; another audit response during validation proposed the breaking 14.2.0 major instead. Pass 4 did not force, downgrade, override, or hide this moderate-only residual. Track the firebase-admin and Google Cloud dependency chain for an upstream compatible update.
+uuid 11.1.1 contains the fix. npm's current audit output still offers only unsafe breaking `npm audit fix --force` remedies through the Firebase dependency chain, including incompatible firebase-admin downgrade or major-change proposals. The release-candidate validation did not run a forced audit fix, downgrade Firebase dependencies, add an override, or hide this moderate-only residual. Track the firebase-admin and Google Cloud dependency chain for an upstream compatible update.
 
 ## Advisory table
 
@@ -253,4 +303,4 @@ uuid 11.1.1 contains the fix. npm's final sequential audit output offers only `n
 
 ## Historical deployment security decision
 
-As assessed on 2026-08-06, there were no production high or critical vulnerabilities and the remaining moderate advisory's affected API was unreachable in the Functions implementation reviewed that day. That reachability statement is historical application-code evidence, not physical production revalidation. The fresh 2026-08-10 package-audit counts are recorded above and in `CODEX_STATUS.md`; no deployment is authorized by either assessment alone.
+As assessed on 2026-08-06, there were no production high or critical vulnerabilities and the remaining moderate advisory's affected API was unreachable in the Functions implementation reviewed that day. That reachability statement is historical application-code evidence, not physical production revalidation. The fresh 2026-08-11 package-audit counts are recorded above and in `CODEX_STATUS.md`; no deployment is authorized by either assessment alone.

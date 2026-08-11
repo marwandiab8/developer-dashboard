@@ -44,11 +44,10 @@ Implemented in the current local working tree:
 
 Current release state:
 
-- This working tree has not been committed or pushed; GitHub `main` remains stale.
-- Local validation is recorded in `CODEX_STATUS.md`.
-- Historical evidence records configured secrets and successful deployments on 2026-08-06; production was not reverified in the current remediation.
-- Automated realtime-ordering coverage is complete; physical multi-device/browser validation was not performed in this remediation.
-- Any deployment or live verification requires a separately approved operation.
+- GitHub `main` contains the released Firebase/GitHub baseline and project-workbench dynamic-route repair.
+- Current validation and deployment evidence belongs only in `CODEX_STATUS.md`; a changed working tree is not implicitly live.
+- Production routes and backend inventory were reverified on 2026-08-11, while authenticated physical multi-device/browser acceptance remains a manual requirement.
+- Any later deployment or live verification requires a separately approved operation.
 
 ## Later phases
 
