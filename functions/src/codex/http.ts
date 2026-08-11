@@ -1,5 +1,5 @@
 import { requireCodexIngestionCredential, requireCodexOwnerUid, type SecretValue } from "./auth";
-import { assertPayloadExcludesConfiguredValues } from "./contract";
+import { assertPayloadExcludesConfiguredValues, isCodexProjectVerificationRequest } from "./contract";
 import type { CodexIngestionService } from "./service";
 import { CODEX_INGESTION_MAX_BYTES, CodexIngestionError, type CodexIngestionErrorCode } from "./types";
 
@@ -32,7 +32,7 @@ const safeFailure = (error: unknown): { status: number; code: CodexIngestionErro
 };
 
 export const createCodexIngestionHttpHandler = (options: {
-  service: Pick<CodexIngestionService, "ingest">;
+  service: Pick<CodexIngestionService, "ingest" | "verifyProject">;
   ingestionSecret: SecretValue;
   ownerUidSecret: SecretValue;
   logger?: SafeLogger;
@@ -62,6 +62,12 @@ export const createCodexIngestionHttpHandler = (options: {
         throw new CodexIngestionError("invalid_request", 400);
       }
       assertPayloadExcludesConfiguredValues(request.body, [ingestionCredential, uid]);
+      if (isCodexProjectVerificationRequest(request.body)) {
+        const result = await options.service.verifyProject(uid, request.body);
+        logger.info("Codex project association verified.", { outcome: result.status });
+        response.status(200).json(result);
+        return;
+      }
       const result = await options.service.ingest(uid, request.body);
       logger.info("Codex session ingestion completed.", {
         outcome: result.status,

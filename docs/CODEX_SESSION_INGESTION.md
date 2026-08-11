@@ -119,6 +119,36 @@ Resolution uses the strongest supplied identity in this order:
 
 When more than one supported selector is supplied, every additional selector must identify the same resolved project. A conflict returns `selector_mismatch` before any write. V1 never fuzzy-matches a title or slug, never silently selects among ambiguous matches, and never creates a project automatically.
 
+### Read-only association verification
+
+The same authenticated endpoint can verify an exact association before a Codex session is reported. This operation applies the same selector precedence, mismatch, ambiguity, authentication, content-type, body-size, and sanitized-error rules as ingestion:
+
+```json
+{
+  "schemaVersion": 1,
+  "operation": "verify_project",
+  "project": {
+    "githubFullName": "example-owner/example-repository"
+  },
+  "source": "codex"
+}
+```
+
+A successful verification returns only these safe inventory fields:
+
+```json
+{
+  "ok": true,
+  "matched": true,
+  "status": "associated",
+  "dashboardProjectId": "33333333-3333-4333-8333-333333333333",
+  "dashboardProjectTitle": "Example project",
+  "matchedBy": "githubFullName"
+}
+```
+
+`matchedBy` is exactly one of `dashboardId`, `githubRepositoryId`, or `githubFullName`. Verification runs in an explicitly read-only Firestore transaction. It creates no ingestion receipt, throttle document, session, prompt, activity, idea, continuity metadata, or project update. It never returns the owner UID, project continuity, notes, purpose, status, credentials, or other project contents. Because it performs zero writes, it does not consume an ingestion rate-limit slot.
+
 ## Records created
 
 A new accepted report creates the following visible Dashboard records:
@@ -241,6 +271,16 @@ Or submit JSON through stdin:
 From the Developer Dashboard repository itself, the equivalent npm wrapper is:
 
     npm run report:codex-session -- complete --file /path/to/codex-session.json
+
+Before reporting from a GitHub repository, verify its exact association without writing Dashboard data:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs verify --github-full-name example-owner/example-repository
+
+For a machine-readable inventory result, add `--json`:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs verify --github-full-name example-owner/example-repository --json
+
+The JSON output is restricted to `ok`, `matched`, `status`, `dashboardProjectId`, `dashboardProjectTitle`, and `matchedBy`. The helper rejects a nominal success response containing any undeclared field instead of printing it.
 
 The helper verifies that the input is a JSON object with an external session identity but sends the original JSON text unchanged. It uses `Authorization: Bearer`, times out the request and response body, never accepts a token argument, never prints the token or raw response body, and converts server and network failures into fixed safe messages. It claims success only after validating the complete success-result shape and confirming the returned external session ID matches the submitted report. A sanitized `idempotency_conflict` receives a distinct retry-conflict message; an unexpected or incomplete HTTP 200 response is a failure. An ingestion failure does not alter or undo the coding work.
 

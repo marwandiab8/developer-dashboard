@@ -1,7 +1,10 @@
 export { requireCodexIngestionCredential, requireCodexOwnerUid } from "./auth";
 export {
   assertPayloadExcludesConfiguredValues,
+  codexProjectVerificationV1Schema,
   codexSessionIngestV1Schema,
+  isCodexProjectVerificationRequest,
+  parseCodexProjectVerificationV1,
   parseCodexSessionIngestV1,
 } from "./contract";
 export { createCodexIngestionHttpHandler } from "./http";
@@ -13,4 +16,10 @@ export {
   CODEX_INGESTION_SCHEMA_VERSION,
   CodexIngestionError,
 } from "./types";
-export type { CodexIngestionResult, CodexSessionIngestV1 } from "./types";
+export type {
+  CodexIngestionResult,
+  CodexProjectSelectorV1,
+  CodexProjectVerificationResult,
+  CodexProjectVerificationV1,
+  CodexSessionIngestV1,
+} from "./types";

@@ -49,6 +49,10 @@ After the Function and its purpose-limited credential are configured, another re
 
     node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs complete --file /path/to/codex-session.json
 
+It can first verify the exact GitHub association with a zero-write request; `--json` emits only the safe project ID, title, and match method needed for an inventory:
+
+    node /home/marwan/Documents/developer-dashboard/tools/report-codex-session.mjs verify --github-full-name example-owner/example-repository --json
+
 The helper reads its endpoint and credential from `DEVELOPER_DASHBOARD_CODEX_INGEST_URL` and `DEVELOPER_DASHBOARD_CODEX_INGEST_TOKEN`. Never put the credential in a command argument or repository file. See `docs/CODEX_SESSION_INGESTION.md` for the exact payload, setup, safety policy, and reusable `AGENTS.md` instruction.
 
 This capability does not make every Codex session automatic by itself. Each external project must opt in by configuring the environment and adopting the end-of-session instruction.
@@ -75,6 +79,7 @@ This capability does not make every Codex session automatic by itself. Each exte
     npm run test:rules
     npm run build
     npm run report:codex-session -- complete --file /path/to/codex-session.json
+    npm run report:codex-session -- verify --github-full-name example-owner/example-repository --json
 
 Functions and Firestore validation are documented in docs/SETUP.md.
 

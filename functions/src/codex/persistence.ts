@@ -10,11 +10,14 @@ import {
   CODEX_INGESTION_RATE_LIMIT_PER_MINUTE,
   CodexIngestionError,
   type CodexIngestionResult,
+  type CodexProjectSelectorV1,
+  type CodexProjectVerificationResult,
   type CodexSessionIngestV1,
 } from "./types";
 
 type StoredRecord = Record<string, unknown>;
-type ResolvedProject = { id: string; data: StoredRecord };
+type ProjectMatchKind = CodexProjectVerificationResult["matchedBy"];
+type ResolvedProject = { id: string; data: StoredRecord; matchedBy: ProjectMatchKind };
 type ContinuityField = "currentObjective" | "currentBlocker" | "nextRecommendedTask";
 type ContinuityFieldState = {
   source?: unknown;
@@ -56,17 +59,22 @@ const githubIdentity = (project: StoredRecord): { id: string | null; fullName: s
 
 const normalizeFullName = (value: string): string => value.trim().toLowerCase();
 
-const toResolvedProject = (snapshot: DocumentSnapshot | QueryDocumentSnapshot): ResolvedProject => ({
+const toResolvedProject = (
+  snapshot: DocumentSnapshot | QueryDocumentSnapshot,
+  matchedBy: ProjectMatchKind,
+): ResolvedProject => ({
   id: snapshot.id,
   data: (snapshot.data() ?? {}) as StoredRecord,
+  matchedBy,
 });
 
 const requireSingleMatch = (
   matches: Array<DocumentSnapshot | QueryDocumentSnapshot>,
+  matchedBy: ProjectMatchKind,
 ): ResolvedProject => {
   if (matches.length === 0) throw new CodexIngestionError("project_not_associated", 404);
   if (matches.length > 1) throw new CodexIngestionError("project_ambiguous", 409);
-  return toResolvedProject(matches[0]);
+  return toResolvedProject(matches[0], matchedBy);
 };
 
 const resolveProject = async (
@@ -79,20 +87,20 @@ const resolveProject = async (
   if (selector.dashboardProjectId) {
     const snapshot = await transaction.get(db.doc(`${projectsPath(uid)}/${selector.dashboardProjectId}`));
     if (!snapshot.exists) throw new CodexIngestionError("project_not_associated", 404);
-    project = toResolvedProject(snapshot);
+    project = toResolvedProject(snapshot, "dashboardId");
   } else if (selector.githubRepositoryId) {
     const query = db.collection(projectsPath(uid))
       .where("externalSources.github.externalRepositoryId", "==", String(selector.githubRepositoryId))
       .limit(2);
     const snapshot = await transaction.get(query);
-    project = requireSingleMatch(snapshot.docs);
+    project = requireSingleMatch(snapshot.docs, "githubRepositoryId");
   } else if (selector.githubFullName) {
     const snapshot = await transaction.get(db.collection(projectsPath(uid)));
     const desired = normalizeFullName(selector.githubFullName);
     project = requireSingleMatch(snapshot.docs.filter((document) => {
       const data = (document.data() ?? {}) as StoredRecord;
       return githubIdentity(data).fullName === desired;
-    }));
+    }), "githubFullName");
   } else {
     // V1 accepts localPath as diagnostic identity, but it is never used to guess a project.
     throw new CodexIngestionError("project_not_associated", 404);
@@ -265,6 +273,24 @@ const minuteKey = (iso: string): string => iso.slice(0, 16);
 
 export class FirestoreCodexIngestionPersistence implements CodexIngestionPersistencePort {
   constructor(private readonly db: Firestore) {}
+
+  async verifyProject(
+    uid: string,
+    selector: CodexProjectSelectorV1,
+  ): Promise<CodexProjectVerificationResult> {
+    return this.db.runTransaction(async (transaction) => {
+      const project = await resolveProject(this.db, transaction, uid, selector);
+      const title = typeof project.data.title === "string" ? project.data.title : "";
+      return {
+        ok: true,
+        matched: true,
+        status: "associated",
+        dashboardProjectId: project.id,
+        dashboardProjectTitle: title,
+        matchedBy: project.matchedBy,
+      };
+    }, { readOnly: true });
+  }
 
   async ingest(input: CodexIngestionPersistenceInput): Promise<CodexIngestionResult> {
     return this.db.runTransaction(async (transaction) => {

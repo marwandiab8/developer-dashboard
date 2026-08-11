@@ -1,6 +1,12 @@
-import { parseCodexSessionIngestV1 } from "./contract";
+import { parseCodexProjectVerificationV1, parseCodexSessionIngestV1 } from "./contract";
 import { payloadFingerprint } from "./identity";
-import { CodexIngestionError, type CodexIngestionResult, type CodexSessionIngestV1 } from "./types";
+import {
+  CodexIngestionError,
+  type CodexIngestionResult,
+  type CodexProjectSelectorV1,
+  type CodexProjectVerificationResult,
+  type CodexSessionIngestV1,
+} from "./types";
 
 export type CodexIngestionPersistenceInput = {
   uid: string;
@@ -11,6 +17,7 @@ export type CodexIngestionPersistenceInput = {
 
 export interface CodexIngestionPersistencePort {
   ingest(input: CodexIngestionPersistenceInput): Promise<CodexIngestionResult>;
+  verifyProject(uid: string, selector: CodexProjectSelectorV1): Promise<CodexProjectVerificationResult>;
 }
 
 export class CodexIngestionService {
@@ -42,5 +49,10 @@ export class CodexIngestionService {
       }),
       receivedAt: receivedAt.toISOString(),
     });
+  }
+
+  async verifyProject(uid: string, raw: unknown): Promise<CodexProjectVerificationResult> {
+    const request = parseCodexProjectVerificationV1(raw);
+    return this.persistence.verifyProject(uid, request.project);
   }
 }

@@ -42,8 +42,141 @@ const successResponse = (externalSessionId: string, idempotent = false) => ({
   activityId: "10000000-0000-5000-8000-000000000003",
   ideaIds: [],
 });
+const verificationResponse = {
+  ok: true,
+  matched: true,
+  status: "associated",
+  dashboardProjectId: "33333333-3333-4333-8333-333333333333",
+  dashboardProjectTitle: "Developer Dashboard",
+  matchedBy: "githubFullName",
+};
 
 describe("Codex session reporting helper", () => {
+  it("verifies an exact GitHub full name without submitting a session or reading stdin", async () => {
+    const stdout = sink();
+    const stderr = sink();
+    const readFileImplementation = vi.fn();
+    const fetchImplementation = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(String(_url)).toBe(endpoint);
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${credential}`);
+      expect(JSON.parse(String(init?.body))).toEqual({
+        schemaVersion: 1,
+        operation: "verify_project",
+        project: { githubFullName: "marwandiab8/developer-dashboard" },
+        source: "codex",
+      });
+      return new Response(JSON.stringify(verificationResponse), { status: 200 });
+    });
+
+    const exitCode = await runCodexSessionCli({
+      argv: ["verify", "--github-full-name", " MarwanDiab8/Developer-Dashboard ", "--json"],
+      environment,
+      fetchImplementation,
+      stdin: { isTTY: true } as typeof process.stdin,
+      stdout,
+      stderr,
+      readFileImplementation,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(fetchImplementation).toHaveBeenCalledTimes(1);
+    expect(readFileImplementation).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout.text)).toEqual(verificationResponse);
+    expect(stderr.text).toBe("");
+    expect(`${stdout.text}${stderr.text}`).not.toContain(credential);
+  });
+
+  it("prints a concise human-readable verified project result", async () => {
+    const stdout = sink();
+    const stderr = sink();
+    const exitCode = await runCodexSessionCli({
+      argv: ["verify", "--github-full-name", "marwandiab8/developer-dashboard"],
+      environment,
+      fetchImplementation: vi.fn(async () => new Response(
+        JSON.stringify(verificationResponse),
+        { status: 200 },
+      )),
+      stdin: input(),
+      stdout,
+      stderr,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.text).toBe(
+      "Developer Dashboard project association verified: Developer Dashboard " +
+      "(33333333-3333-4333-8333-333333333333; matched by githubFullName).\n",
+    );
+    expect(stderr.text).toBe("");
+  });
+
+  it("rejects invalid verification input before making a request", async () => {
+    const stdout = sink();
+    const stderr = sink();
+    const fetchImplementation = vi.fn();
+    const exitCode = await runCodexSessionCli({
+      argv: ["verify", "--github-full-name", "not-a-full-name"],
+      environment,
+      fetchImplementation,
+      stdin: input(),
+      stdout,
+      stderr,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(stdout.text).toBe("");
+    expect(stderr.text).toBe("GitHub full name must be exact OWNER/REPOSITORY syntax.\n");
+  });
+
+  it("sanitizes a missing project verification without printing the raw response", async () => {
+    const stdout = sink();
+    const stderr = sink();
+    const rawSensitiveMessage = `missing project detail ${credential}`;
+    const exitCode = await runCodexSessionCli({
+      argv: ["verify", "--github-full-name", "owner/missing"],
+      environment,
+      fetchImplementation: vi.fn(async () => new Response(JSON.stringify({
+        ok: false,
+        error: { code: "project_not_associated", message: rawSensitiveMessage },
+      }), { status: 404 })),
+      stdin: input(),
+      stdout,
+      stderr,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout.text).toBe("");
+    expect(stderr.text).toBe(
+      "Developer Dashboard could not safely associate the requested project.\n",
+    );
+    expect(`${stdout.text}${stderr.text}`).not.toContain(credential);
+    expect(`${stdout.text}${stderr.text}`).not.toContain(rawSensitiveMessage);
+  });
+
+  it("rejects a verification success response containing undeclared fields", async () => {
+    const stdout = sink();
+    const stderr = sink();
+    const exitCode = await runCodexSessionCli({
+      argv: ["verify", "--github-full-name", "owner/repo"],
+      environment,
+      fetchImplementation: vi.fn(async () => new Response(JSON.stringify({
+        ...verificationResponse,
+        ownerUid: "must-not-be-returned",
+      }), { status: 200 })),
+      stdin: input(),
+      stdout,
+      stderr,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout.text).toBe("");
+    expect(stderr.text).toBe(
+      "Developer Dashboard returned an invalid project verification response.\n",
+    );
+    expect(`${stdout.text}${stderr.text}`).not.toContain("must-not-be-returned");
+  });
+
   it("submits a file payload unchanged with bearer authentication from any working directory", async () => {
     const payload = `{
   "schemaVersion": 1,

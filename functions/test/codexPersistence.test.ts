@@ -118,6 +118,7 @@ type PendingOperation = (documents: Map<string, Stored>) => void;
 class FakeFirestore {
   documents = new Map<string, Stored>();
   failCommit = false;
+  lastTransactionOptions: { readOnly?: boolean } | undefined;
 
   doc(path: string) { return new FakeDocumentReference(path); }
   collection(path: string) { return new FakeQuery(path); }
@@ -137,7 +138,8 @@ class FakeFirestore {
     create(reference: FakeDocumentReference, data: Stored): void;
     set(reference: FakeDocumentReference, data: Stored, options?: { merge?: boolean }): void;
     update(reference: FakeDocumentReference, data: Stored): void;
-  }) => Promise<T>): Promise<T> {
+  }) => Promise<T>, options?: { readOnly?: boolean }): Promise<T> {
+    this.lastTransactionOptions = options;
     const operations: PendingOperation[] = [];
     const result = await callback({
       get: async (reference) => reference instanceof FakeQuery
@@ -176,6 +178,75 @@ const persistenceFor = (database: FakeFirestore) =>
 const expectCode = async (promise: Promise<unknown>, code: string) => {
   await assert.rejects(promise, (error) => error instanceof CodexIngestionError && error.code === code);
 };
+
+test("read-only project verification reuses exact matching and performs zero writes", async () => {
+  const database = new FakeFirestore();
+  const projectPath = `users/${owner}/projects/${projectOne}`;
+  database.documents.set(projectPath, projectRecord("123", "Owner/Repo", {
+    title: "Developer Dashboard",
+    purpose: "Must never appear in verification output",
+    currentBlocker: "Private continuity must not appear",
+  }));
+  const before = clone([...database.documents.entries()]);
+  const persistence = persistenceFor(database);
+
+  const byFullName = await persistence.verifyProject(owner, { githubFullName: "owner/repo" });
+  assert.deepEqual(byFullName, {
+    ok: true,
+    matched: true,
+    status: "associated",
+    dashboardProjectId: projectOne,
+    dashboardProjectTitle: "Developer Dashboard",
+    matchedBy: "githubFullName",
+  });
+  assert.deepEqual([...database.documents.entries()], before);
+  assert.deepEqual(database.lastTransactionOptions, { readOnly: true });
+  assert.equal(JSON.stringify(byFullName).includes("Private continuity"), false);
+  assert.equal(JSON.stringify(byFullName).includes("Must never appear"), false);
+
+  const byNumericId = await persistence.verifyProject(owner, { githubRepositoryId: 123 });
+  assert.equal(byNumericId.matchedBy, "githubRepositoryId");
+  const byStrongestId = await persistence.verifyProject(owner, {
+    dashboardProjectId: projectOne,
+    githubRepositoryId: 123,
+    githubFullName: "OWNER/REPO",
+  });
+  assert.equal(byStrongestId.matchedBy, "dashboardId");
+  assert.deepEqual([...database.documents.entries()], before);
+
+  await expectCode(
+    persistence.verifyProject(owner, { githubFullName: "owner/missing" }),
+    "project_not_associated",
+  );
+  assert.deepEqual([...database.documents.entries()], before);
+
+  await expectCode(
+    persistence.verifyProject(owner, {
+      dashboardProjectId: projectOne,
+      githubRepositoryId: 999,
+    }),
+    "selector_mismatch",
+  );
+  await expectCode(
+    persistence.verifyProject(owner, {
+      githubRepositoryId: 123,
+      githubFullName: "owner/missing",
+    }),
+    "selector_mismatch",
+  );
+  assert.deepEqual([...database.documents.entries()], before);
+
+  database.documents.set(
+    `users/${owner}/projects/${projectTwo}`,
+    projectRecord("456", "OWNER/REPO", { title: "Duplicate identity" }),
+  );
+  const beforeAmbiguous = clone([...database.documents.entries()]);
+  await expectCode(
+    persistence.verifyProject(owner, { githubFullName: "owner/repo" }),
+    "project_ambiguous",
+  );
+  assert.deepEqual([...database.documents.entries()], beforeAmbiguous);
+});
 
 test("atomically creates one complete Codex projection and recognizes an ambiguous-response retry", async () => {
   const database = new FakeFirestore();

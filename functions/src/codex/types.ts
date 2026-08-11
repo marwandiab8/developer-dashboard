@@ -37,6 +37,24 @@ export type CodexSessionIngestV1 = {
   source: "codex";
 };
 
+export type CodexProjectSelectorV1 = CodexSessionIngestV1["project"];
+
+export type CodexProjectVerificationV1 = {
+  schemaVersion: typeof CODEX_INGESTION_SCHEMA_VERSION;
+  operation: "verify_project";
+  project: CodexProjectSelectorV1;
+  source: "codex";
+};
+
+export type CodexProjectVerificationResult = {
+  ok: true;
+  matched: true;
+  status: "associated";
+  dashboardProjectId: string;
+  dashboardProjectTitle: string;
+  matchedBy: "dashboardId" | "githubRepositoryId" | "githubFullName";
+};
+
 export type CodexIngestionResult = {
   ok: true;
   idempotent: boolean;

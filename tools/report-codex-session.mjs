@@ -17,29 +17,33 @@ const usage = () => [
   "Usage:",
   "  report-codex-session complete --file PATH",
   "  report-codex-session complete < session.json",
+  "  report-codex-session verify --github-full-name OWNER/REPOSITORY [--json]",
   "",
   `Required environment: ${INGEST_URL_ENV}, ${INGEST_TOKEN_ENV}`,
 ].join("\n");
 
 const parseArguments = (argv) => {
   if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-    return { help: true, filePath: null };
+    return { help: true, command: null, filePath: null, githubFullName: null, json: false };
   }
 
-  if (argv[0] !== "complete") {
-    throw new SafeCliError("Use the complete command with a JSON file or piped JSON input.");
+  if (argv[0] !== "complete" && argv[0] !== "verify") {
+    throw new SafeCliError("Use complete to report a session or verify to check a project association.");
   }
 
+  const command = argv[0];
   let filePath = null;
+  let githubFullName = null;
+  let json = false;
   for (let index = 1; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--help" || argument === "-h") {
-      return { help: true, filePath: null };
+      return { help: true, command: null, filePath: null, githubFullName: null, json: false };
     }
     if (argument === "--token" || argument.startsWith("--token=")) {
       throw new SafeCliError(`Supply the credential only through ${INGEST_TOKEN_ENV}.`);
     }
-    if (argument === "--file") {
+    if (command === "complete" && argument === "--file") {
       if (filePath !== null || index + 1 >= argv.length) {
         throw new SafeCliError("Provide exactly one path after --file.");
       }
@@ -47,10 +51,27 @@ const parseArguments = (argv) => {
       index += 1;
       continue;
     }
+    if (command === "verify" && argument === "--github-full-name") {
+      if (githubFullName !== null || index + 1 >= argv.length) {
+        throw new SafeCliError("Provide exactly one owner/repository value after --github-full-name.");
+      }
+      githubFullName = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (command === "verify" && argument === "--json") {
+      if (json) throw new SafeCliError("Provide --json at most once.");
+      json = true;
+      continue;
+    }
     throw new SafeCliError("Unsupported command argument.");
   }
 
-  return { help: false, filePath };
+  if (command === "verify" && githubFullName === null) {
+    throw new SafeCliError("The verify command requires --github-full-name OWNER/REPOSITORY.");
+  }
+
+  return { help: false, command, filePath, githubFullName, json };
 };
 
 const readStreamText = async (stream) => {
@@ -140,7 +161,7 @@ const safeHttpFailure = async (response) => {
   if (status === 400 || status === 422) return "Developer Dashboard rejected the session payload.";
   if (status === 401 || status === 403) return "Developer Dashboard ingestion authentication failed.";
   if (status === 404) {
-    return "Developer Dashboard could not safely associate the session with a project.";
+    return "Developer Dashboard could not safely associate the requested project.";
   }
   if (status === 409) {
     const code = await readSafeErrorCode(response);
@@ -156,6 +177,15 @@ const safeHttpFailure = async (response) => {
 };
 
 const isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
+const githubFullNamePattern = /^[^/\s]+\/[^/\s]+$/;
+
+const normalizeGithubFullName = (value) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized || normalized.length > 256 || !githubFullNamePattern.test(normalized)) {
+    throw new SafeCliError("GitHub full name must be exact OWNER/REPOSITORY syntax.");
+  }
+  return normalized;
+};
 
 const readIngestionResult = async (response, expectedExternalSessionId) => {
   try {
@@ -239,6 +269,92 @@ export const submitCodexSession = async ({
   }
 };
 
+const readProjectVerificationResult = async (response) => {
+  try {
+    const rawResponse = await response.text();
+    if (Buffer.byteLength(rawResponse, "utf8") > 32_768) {
+      throw new Error("Response exceeds the safe limit.");
+    }
+    const parsed = JSON.parse(rawResponse);
+    const keys = Object.keys(parsed ?? {}).sort();
+    const expectedKeys = [
+      "dashboardProjectId",
+      "dashboardProjectTitle",
+      "matched",
+      "matchedBy",
+      "ok",
+      "status",
+    ].sort();
+    const exactSafeShape = keys.length === expectedKeys.length &&
+      keys.every((key, index) => key === expectedKeys[index]);
+    const validMatchKind = ["dashboardId", "githubRepositoryId", "githubFullName"]
+      .includes(parsed?.matchedBy);
+    if (
+      !exactSafeShape ||
+      parsed?.ok !== true ||
+      parsed?.matched !== true ||
+      parsed?.status !== "associated" ||
+      !isNonEmptyString(parsed?.dashboardProjectId) ||
+      typeof parsed?.dashboardProjectTitle !== "string" ||
+      !validMatchKind
+    ) {
+      throw new Error("Unexpected response contract.");
+    }
+    return parsed;
+  } catch {
+    throw new SafeCliError("Developer Dashboard returned an invalid project verification response.");
+  }
+};
+
+/**
+ * @param {{
+ *   endpoint: string;
+ *   token: string;
+ *   githubFullName: string;
+ *   fetchImplementation?: typeof globalThis.fetch;
+ *   timeoutMs?: number;
+ * }} input
+ */
+export const verifyCodexProject = async ({
+  endpoint,
+  token,
+  githubFullName,
+  fetchImplementation = globalThis.fetch,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+}) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  const payloadText = JSON.stringify({
+    schemaVersion: 1,
+    operation: "verify_project",
+    project: { githubFullName },
+    source: "codex",
+  });
+
+  try {
+    const response = await fetchImplementation(endpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: payloadText,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new SafeCliError(await safeHttpFailure(response));
+    }
+    return await readProjectVerificationResult(response);
+  } catch (error) {
+    if (error instanceof SafeCliError) throw error;
+    throw new SafeCliError("Could not reach the Developer Dashboard ingestion endpoint.");
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 /**
  * @param {{
  *   argv?: string[];
@@ -267,6 +383,25 @@ export const runCodexSessionCli = async ({
     }
 
     const { endpoint, token } = readConfiguration(environment);
+    if (argumentsResult.command === "verify") {
+      const githubFullName = normalizeGithubFullName(argumentsResult.githubFullName);
+      const result = await verifyCodexProject({
+        endpoint,
+        token,
+        githubFullName,
+        fetchImplementation,
+      });
+      if (argumentsResult.json) {
+        stdout.write(`${JSON.stringify(result)}\n`);
+      } else {
+        stdout.write(
+          `Developer Dashboard project association verified: ${result.dashboardProjectTitle} ` +
+          `(${result.dashboardProjectId}; matched by ${result.matchedBy}).\n`,
+        );
+      }
+      return 0;
+    }
+
     const payloadText = await loadPayloadText({
       filePath: argumentsResult.filePath,
       stdin,

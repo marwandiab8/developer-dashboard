@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   CODEX_INGESTION_MAX_BYTES,
+  type CodexProjectVerificationV1,
   type CodexSessionIngestV1,
   CodexIngestionError,
 } from "./types";
@@ -23,22 +24,24 @@ const githubFullName = z.string()
   .regex(/^[^/\s]+\/[^/\s]+$/)
   .transform((value) => value.toLowerCase());
 
+const projectSelectorV1Schema = z.object({
+  dashboardProjectId: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
+  githubRepositoryId: z.number().int().positive().safe().optional(),
+  githubFullName: githubFullName.optional(),
+  localPath: z.string().trim().min(1).max(2048).optional(),
+}).strict().refine(
+  (project) => Boolean(
+    project.dashboardProjectId ||
+    project.githubRepositoryId ||
+    project.githubFullName ||
+    project.localPath,
+  ),
+  "At least one project identity is required.",
+);
+
 export const codexSessionIngestV1Schema = z.object({
   schemaVersion: z.literal(1),
-  project: z.object({
-    dashboardProjectId: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
-    githubRepositoryId: z.number().int().positive().safe().optional(),
-    githubFullName: githubFullName.optional(),
-    localPath: z.string().trim().min(1).max(2048).optional(),
-  }).strict().refine(
-    (project) => Boolean(
-      project.dashboardProjectId ||
-      project.githubRepositoryId ||
-      project.githubFullName ||
-      project.localPath,
-    ),
-    "At least one project identity is required.",
-  ),
+  project: projectSelectorV1Schema,
   session: z.object({
     externalSessionId,
     startedAt: z.string().datetime({ offset: true }).optional(),
@@ -65,6 +68,13 @@ export const codexSessionIngestV1Schema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "startedAt must not be after endedAt." });
     }
   }),
+  source: z.literal("codex"),
+}).strict();
+
+export const codexProjectVerificationV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  operation: z.literal("verify_project"),
+  project: projectSelectorV1Schema,
   source: z.literal("codex"),
 }).strict();
 
@@ -124,6 +134,27 @@ export const assertPayloadExcludesConfiguredValues = (
   if (containsForbiddenValue) {
     throw new CodexIngestionError("sensitive_content", 400);
   }
+};
+
+export const isCodexProjectVerificationRequest = (raw: unknown): boolean =>
+  Boolean(raw && typeof raw === "object" && !Array.isArray(raw) &&
+    (raw as { operation?: unknown }).operation === "verify_project");
+
+export const parseCodexProjectVerificationV1 = (raw: unknown): CodexProjectVerificationV1 => {
+  if (serializedByteLength(raw) > CODEX_INGESTION_MAX_BYTES) {
+    throw new CodexIngestionError("invalid_request", 400);
+  }
+  if (hasUnsupportedSchema(raw)) {
+    throw new CodexIngestionError("unsupported_schema", 400);
+  }
+  const parsed = codexProjectVerificationV1Schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new CodexIngestionError("invalid_request", 400);
+  }
+  if (containsCredential(parsed.data)) {
+    throw new CodexIngestionError("sensitive_content", 400);
+  }
+  return parsed.data;
 };
 
 export const parseCodexSessionIngestV1 = (raw: unknown): CodexSessionIngestV1 => {

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { requireCodexIngestionCredential, requireCodexOwnerUid } from "../src/codex/auth";
-import { parseCodexSessionIngestV1 } from "../src/codex/contract";
+import { parseCodexProjectVerificationV1, parseCodexSessionIngestV1 } from "../src/codex/contract";
 import { createCodexIngestionHttpHandler, type CodexHttpResponse } from "../src/codex/http";
 import { CodexIngestionService, type CodexIngestionPersistencePort } from "../src/codex/service";
-import { CodexIngestionError, type CodexIngestionResult } from "../src/codex/types";
+import {
+  CodexIngestionError,
+  type CodexIngestionResult,
+  type CodexProjectVerificationResult,
+} from "../src/codex/types";
 
 const projectId = "33333333-3333-4333-8333-333333333333";
 const payload = (changes: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -43,6 +47,33 @@ test("validates V1 while preserving authored whitespace and normalizing machine 
   assert.equal(parsed.session.externalSessionId, "session:one");
   assert.equal(parsed.session.prompt, "  preserve this prompt\n\n");
   assert.equal(parsed.session.summary, "  completed safely\n");
+});
+
+test("validates the strict read-only project verification contract", () => {
+  const parsed = parseCodexProjectVerificationV1({
+    schemaVersion: 1,
+    operation: "verify_project",
+    project: { githubFullName: " Owner/Repo " },
+    source: "codex",
+  });
+  assert.deepEqual(parsed, {
+    schemaVersion: 1,
+    operation: "verify_project",
+    project: { githubFullName: "owner/repo" },
+    source: "codex",
+  });
+  expectIngestionCode(() => parseCodexProjectVerificationV1({
+    ...parsed,
+    operation: "inspect_project",
+  }), "invalid_request");
+  expectIngestionCode(() => parseCodexProjectVerificationV1({
+    ...parsed,
+    schemaVersion: 2,
+  }), "unsupported_schema");
+  expectIngestionCode(() => parseCodexProjectVerificationV1({
+    ...parsed,
+    project: { githubFullName: "not-a-full-name" },
+  }), "invalid_request");
 });
 
 test("rejects unsupported versions, malformed payloads, unsafe bounds, and reverse timestamps", () => {
@@ -90,6 +121,7 @@ test("requires the configured bearer credential and owner without exposing eithe
 
 class RecordingPersistence implements CodexIngestionPersistencePort {
   input: Parameters<CodexIngestionPersistencePort["ingest"]>[0] | null = null;
+  verificationSelector: Parameters<CodexIngestionPersistencePort["verifyProject"]>[1] | null = null;
   async ingest(input: Parameters<CodexIngestionPersistencePort["ingest"]>[0]): Promise<CodexIngestionResult> {
     this.input = input;
     return {
@@ -99,6 +131,20 @@ class RecordingPersistence implements CodexIngestionPersistencePort {
       promptId: "10000000-0000-5000-8000-000000000002",
       activityId: "10000000-0000-5000-8000-000000000003",
       ideaIds: [],
+    };
+  }
+  async verifyProject(
+    _uid: string,
+    selector: Parameters<CodexIngestionPersistencePort["verifyProject"]>[1],
+  ): Promise<CodexProjectVerificationResult> {
+    this.verificationSelector = selector;
+    return {
+      ok: true,
+      matched: true,
+      status: "associated",
+      dashboardProjectId: projectId,
+      dashboardProjectTitle: "Developer Dashboard",
+      matchedBy: "githubFullName",
     };
   }
 }
@@ -115,6 +161,27 @@ test("service validates before persistence and supplies a stable fingerprint and
     () => service.ingest("owner", payload({ endedAt: "2026-08-11T11:12:00.000Z" })),
     (error) => error instanceof CodexIngestionError && error.code === "invalid_request",
   );
+});
+
+test("service verifies an exact project selector without invoking ingestion", async () => {
+  const persistence = new RecordingPersistence();
+  const service = new CodexIngestionService(persistence);
+  const result = await service.verifyProject("owner", {
+    schemaVersion: 1,
+    operation: "verify_project",
+    project: { githubFullName: " Owner/Repo " },
+    source: "codex",
+  });
+  assert.equal(persistence.input, null);
+  assert.deepEqual(persistence.verificationSelector, { githubFullName: "owner/repo" });
+  assert.deepEqual(result, {
+    ok: true,
+    matched: true,
+    status: "associated",
+    dashboardProjectId: projectId,
+    dashboardProjectTitle: "Developer Dashboard",
+    matchedBy: "githubFullName",
+  });
 });
 
 class FakeResponse implements CodexHttpResponse {
@@ -134,6 +201,14 @@ test("HTTP handler accepts valid auth and returns observable idempotency", async
       externalSessionId: "session", sessionId: "session-id", promptId: "prompt-id",
       activityId: "activity-id", ideaIds: [],
     }),
+    verifyProject: async () => ({
+      ok: true as const,
+      matched: true as const,
+      status: "associated" as const,
+      dashboardProjectId: projectId,
+      dashboardProjectTitle: "Developer Dashboard",
+      matchedBy: "githubFullName" as const,
+    }),
   };
   const handler = createCodexIngestionHttpHandler({
     service,
@@ -146,11 +221,114 @@ test("HTTP handler accepts valid auth and returns observable idempotency", async
   assert.equal(response.headers.get("Cache-Control"), "no-store");
 });
 
+test("HTTP handler authenticates project verification and returns only safe inventory fields", async () => {
+  let ingestionCalls = 0;
+  let verificationCalls = 0;
+  const logs: Array<{ message: string; details?: Record<string, unknown> }> = [];
+  const handler = createCodexIngestionHttpHandler({
+    service: {
+      ingest: async () => {
+        ingestionCalls += 1;
+        throw new Error("must not ingest");
+      },
+      verifyProject: async () => {
+        verificationCalls += 1;
+        return {
+          ok: true,
+          matched: true,
+          status: "associated",
+          dashboardProjectId: projectId,
+          dashboardProjectTitle: "Developer Dashboard",
+          matchedBy: "githubFullName",
+        } as const;
+      },
+    },
+    ingestionSecret: { value: () => "token" },
+    ownerUidSecret: { value: () => "firebase-uid-abcdef" },
+    logger: {
+      info: (message, details) => logs.push({ message, details }),
+      warn: () => undefined,
+    },
+  });
+  const response = new FakeResponse();
+  await handler({
+    method: "POST",
+    headers: { authorization: "Bearer token", "content-type": "application/json" },
+    body: {
+      schemaVersion: 1,
+      operation: "verify_project",
+      project: { githubFullName: "owner/repo" },
+      source: "codex",
+    },
+  }, response);
+  assert.equal(response.statusCode, 200);
+  assert.equal(ingestionCalls, 0);
+  assert.equal(verificationCalls, 1);
+  assert.deepEqual(response.body, {
+    ok: true,
+    matched: true,
+    status: "associated",
+    dashboardProjectId: projectId,
+    dashboardProjectTitle: "Developer Dashboard",
+    matchedBy: "githubFullName",
+  });
+  assert.deepEqual(logs, [{
+    message: "Codex project association verified.",
+    details: { outcome: "associated" },
+  }]);
+  assert.equal(JSON.stringify(logs).includes(projectId), false);
+  assert.equal(JSON.stringify(logs).includes("owner/repo"), false);
+});
+
+test("HTTP handler rejects missing or invalid verification credentials before any project read", async () => {
+  let calls = 0;
+  const handler = createCodexIngestionHttpHandler({
+    service: {
+      ingest: async () => {
+        calls += 1;
+        throw new Error("must not ingest");
+      },
+      verifyProject: async () => {
+        calls += 1;
+        throw new Error("must not verify");
+      },
+    },
+    ingestionSecret: { value: () => "correct-token" },
+    ownerUidSecret: { value: () => "owner" },
+  });
+  const verificationBody = {
+    schemaVersion: 1,
+    operation: "verify_project",
+    project: { githubFullName: "owner/repo" },
+    source: "codex",
+  };
+
+  for (const authorization of [undefined, "Bearer wrong-token"]) {
+    const response = new FakeResponse();
+    await handler({
+      method: "POST",
+      headers: {
+        ...(authorization ? { authorization } : {}),
+        "content-type": "application/json",
+      },
+      body: verificationBody,
+    }, response);
+    assert.equal(response.statusCode, 401);
+    assert.equal((response.body as { error?: { code?: string } }).error?.code, "unauthenticated");
+    assert.equal(JSON.stringify(response.body).includes("correct-token"), false);
+  }
+
+  assert.equal(calls, 0);
+});
+
 test("HTTP handler sanitizes auth and internal failures and rejects non-POST methods", async () => {
   const secretValue = "do-not-print-token";
   const warnings: Array<Record<string, unknown> | undefined> = [];
   const handler = createCodexIngestionHttpHandler({
-    service: { ingest: async () => { throw new Error(`failed with ${secretValue}`); } },
+    service: {
+      ingest: async () => { throw new Error(`failed with ${secretValue}`); },
+      verifyProject: async () => { throw new Error(`failed with ${secretValue}`); },
+    },
     ingestionSecret: { value: () => secretValue },
     ownerUidSecret: { value: () => "owner" },
     logger: { info: () => undefined, warn: (_message, details) => warnings.push(details) },
@@ -175,7 +353,10 @@ test("HTTP handler sanitizes auth and internal failures and rejects non-POST met
 test("HTTP handler requires JSON and enforces the raw request byte ceiling", async () => {
   let calls = 0;
   const handler = createCodexIngestionHttpHandler({
-    service: { ingest: async () => { calls += 1; throw new Error("must not run"); } },
+    service: {
+      ingest: async () => { calls += 1; throw new Error("must not run"); },
+      verifyProject: async () => { calls += 1; throw new Error("must not run"); },
+    },
     ingestionSecret: { value: () => "token" },
     ownerUidSecret: { value: () => "owner" },
   });
@@ -204,7 +385,10 @@ test("HTTP handler rejects configured ingestion and owner secrets embedded in pa
   let calls = 0;
   const warnings: Array<Record<string, unknown> | undefined> = [];
   const handler = createCodexIngestionHttpHandler({
-    service: { ingest: async () => { calls += 1; throw new Error("must not run"); } },
+    service: {
+      ingest: async () => { calls += 1; throw new Error("must not run"); },
+      verifyProject: async () => { calls += 1; throw new Error("must not run"); },
+    },
     ingestionSecret: { value: () => ingestionCredential },
     ownerUidSecret: { value: () => ownerUid },
     logger: { info: () => undefined, warn: (_message, details) => warnings.push(details) },
