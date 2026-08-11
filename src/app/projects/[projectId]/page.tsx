@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, FormEvent } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { GitHubProjectMetadata } from "../../../components/GitHubProjectMetadata";
 import { PROJECT_SECTIONS } from "../../../lib/constants";
 import { generateAiContext } from "../../../lib/markdown/generateAiContext";
@@ -50,7 +50,8 @@ function sectionFromSearch(section: string | null) {
   return "workbench";
 }
 
-export default function ProjectWorkbenchPage({ params }: { params: { projectId: string } }) {
+export default function ProjectWorkbenchPage() {
+  const { projectId } = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
@@ -84,21 +85,27 @@ export default function ProjectWorkbenchPage({ params }: { params: { projectId: 
     appendSessionNote,
   } = useDashboard();
 
-  const project = data.projects.find((item) => item.id === params.projectId);
-  const projectIdeas = data.ideas.filter((item) => item.projectId === params.projectId);
-  const projectTasks = data.tasks.filter((item) => item.projectId === params.projectId);
-  const projectBrainDumps = data.brainDumps.filter((item) => item.projectId === params.projectId);
-  const projectSessions = data.developmentSessions.filter((item) => item.projectId === params.projectId);
-  const projectDecisions = data.architectureDecisions.filter((item) => item.projectId === params.projectId);
-  const projectPrompts = data.codexPrompts.filter((item) => item.projectId === params.projectId);
-  const projectNotes = data.notes.filter((item) => item.projectId === params.projectId);
-  const projectLinks = data.importantLinks.filter((item) => item.projectId === params.projectId);
-  const projectActivity = data.activities.filter((item) => item.projectId === params.projectId);
+  const project = data.projects.find((item) => item.id === projectId);
+  const projectIdeas = data.ideas.filter((item) => item.projectId === projectId);
+  const projectTasks = data.tasks.filter((item) => item.projectId === projectId);
+  const projectBrainDumps = data.brainDumps.filter((item) => item.projectId === projectId);
+  const projectSessions = data.developmentSessions.filter((item) => item.projectId === projectId);
+  const projectDecisions = data.architectureDecisions.filter((item) => item.projectId === projectId);
+  const projectPrompts = data.codexPrompts.filter((item) => item.projectId === projectId);
+  const projectNotes = data.notes.filter((item) => item.projectId === projectId);
+  const projectLinks = data.importantLinks.filter((item) => item.projectId === projectId);
+  const projectActivity = data.activities.filter((item) => item.projectId === projectId);
   const activeSession = projectSessions.find((session) => session.status === "active");
 
-  const scratchpadText = getProjectScratchpad(params.projectId)?.markdown || "";
-  const resumeText = useMemo(() => generateProjectResume(data, params.projectId), [data, params.projectId]);
-  const contextText = useMemo(() => generateAiContext(data, params.projectId), [data, params.projectId]);
+  const scratchpadText = project ? getProjectScratchpad(projectId)?.markdown || "" : "";
+  const resumeText = useMemo(
+    () => (project ? generateProjectResume(data, projectId) : ""),
+    [data, project, projectId],
+  );
+  const contextText = useMemo(
+    () => (project ? generateAiContext(data, projectId) : ""),
+    [data, project, projectId],
+  );
 
   const [ideaText, setIdeaText] = useState("");
   const [ideaDescription, setIdeaDescription] = useState("");
