@@ -1,0 +1,95 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isDashboardCollection(collectionName) {
+      return collectionName in [
+        'projects',
+        'ideas',
+        'tasks',
+        'brainDumps',
+        'scratchpads',
+        'architectureDecisions',
+        'codexPrompts',
+        'notes',
+        'links',
+        'sessions',
+        'activity'
+      ];
+    }
+
+    match /users/{uid} {
+      // The client owns its profile, but profile deletion is not an application operation.
+      allow read, create, update: if isOwner(uid);
+      allow delete: if false;
+
+      // This is the single client-managed migration marker used by the local-first flow.
+      match /migrationState/localStorageV1 {
+        allow read, write: if isOwner(uid);
+      }
+
+      // Cloud Functions use the Admin SDK and bypass these rules. Browser clients must
+      // use callable Functions instead of mutating synchronization gates, leases, or audits.
+      match /githubSync/{document=**} {
+        allow read, write: if false;
+      }
+
+      match /githubSyncRuns/{document=**} {
+        allow read, write: if false;
+      }
+
+      // Every optimistic client mutation receives an immutable transaction
+      // receipt. A retained local journal can therefore distinguish an
+      // acknowledged write from one that never committed without replaying
+      // stale fields over newer cloud work.
+      match /reconciliationReceipts/{operationId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'operationId',
+            'actionType',
+            'fingerprint',
+            'contractVersion',
+            'createdAt'
+          ])
+          && request.resource.data.operationId == operationId
+          && request.resource.data.actionType is string
+          && request.resource.data.fingerprint is string
+          && request.resource.data.contractVersion == 1
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      // Reconciliation receipts make session-note appends safe to retry after
+      // an ambiguous client acknowledgement. They are immutable and contain no
+      // synchronization credentials or backend lease state.
+      match /sessions/{sessionId}/reconciliationReceipts/{operationId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'operationId',
+            'actionType',
+            'sessionId',
+            'createdAt'
+          ])
+          && request.resource.data.operationId == operationId
+          && request.resource.data.actionType == 'session_note_append'
+          && request.resource.data.sessionId == sessionId
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /{collectionName}/{documentId} {
+        allow read, write: if isOwner(uid) && isDashboardCollection(collectionName);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

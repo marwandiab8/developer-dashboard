@@ -1,10 +1,18 @@
 "use client";
 
-import { FormEvent, useCallback, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PRIMARY_NAV } from "../lib/constants";
 import { useKeyboardShortcuts } from "../lib/hooks/useKeyboardShortcuts";
+import { useAuth } from "../lib/auth/useAuth";
+import { useDashboard } from "../lib/repositories/repositoryContext";
 import { QuickCaptureDialog } from "./QuickCaptureDialog";
 import { ShortcutHelpDialog } from "./ShortcutHelpDialog";
 
@@ -14,10 +22,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const auth = useAuth();
+  const dashboard = useDashboard();
+
+  const {
+    beginMigrationImport,
+    beginMigrationKeepCloud,
+    migrationState,
+    repositoryMode,
+    localPersistenceStatus,
+    localPersistenceError,
+    syncStatus,
+    lastActionError,
+    clearLastActionError,
+  } = dashboard;
+
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [quickCaptureProjectId, setQuickCaptureProjectId] = useState<string | undefined>();
   const [helpOpen, setHelpOpen] = useState(false);
   const [showMobileNav, setShowMobileNav] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const quickCaptureLauncher = useRef<HTMLButtonElement | null>(null);
 
   const currentProjectId = useMemo(() => {
@@ -101,6 +125,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setShowMobileNav(false);
   }, []);
 
+  const startSignin = useCallback(async () => {
+    await auth.signInWithGoogle();
+  }, [auth]);
+
+  const doSignOut = useCallback(async () => {
+    await auth.signOut();
+  }, [auth]);
+
+  const startImport = useCallback(async () => {
+    setIsImporting(true);
+    try {
+      await beginMigrationImport();
+    } finally {
+      setIsImporting(false);
+    }
+  }, [beginMigrationImport]);
+
+  const keepCloud = useCallback(async () => {
+    setIsImporting(true);
+    try {
+      await beginMigrationKeepCloud();
+    } finally {
+      setIsImporting(false);
+    }
+  }, [beginMigrationKeepCloud]);
+
   useKeyboardShortcuts({
     handlers: {
       openQuickCapture,
@@ -172,6 +222,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     [openSearch],
   );
 
+  const syncLabel = useMemo(() => {
+    if (syncStatus === "saving") return "Saving";
+    if (syncStatus === "offline") return "Offline";
+    if (syncStatus === "error") return "Sync error";
+    if (syncStatus === "loading") return "Loading";
+    return "Synced";
+  }, [syncStatus]);
+
+  const migrationNotice = useMemo(() => {
+    if (auth.status !== "authenticated" || !auth.user || migrationState.phase !== "required") {
+      return null;
+    }
+
+    const localCount = Object.values(migrationState.localRecordCounts).reduce((total, value) => total + value, 0);
+    const cloudCount = Object.values(migrationState.cloudRecordCounts).reduce((total, value) => total + value, 0);
+    const hasCloud = cloudCount > 0;
+    const isUnassignedLegacyRecovery = migrationState.markerStatus === "legacy_recovery_unassigned";
+
+    return {
+      localCount,
+      cloudCount,
+      hasCloud,
+      label: isUnassignedLegacyRecovery
+        ? "Legacy recovery is local-only until you explicitly associate it with this account."
+        : hasCloud
+          ? "Cloud already has data. Review before you merge."
+          : "Cloud is empty. Import local data to start cloud sync.",
+      importLabel: isUnassignedLegacyRecovery
+        ? "Associate recovery and import"
+        : "Import local backup",
+      keepCloudLabel: isUnassignedLegacyRecovery
+        ? "Associate recovery, then keep cloud"
+        : "Keep cloud data",
+    };
+  }, [auth.status, auth.user, migrationState]);
+
+  const isAuthenticated = auth.status === "authenticated" && Boolean(auth.user);
+
   return (
     <div className="dd-page-shell dd-surface">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
@@ -226,6 +314,109 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             {quickCaptureActionLabel}
           </button>
+
+          <div className="ml-2 flex items-center gap-2">
+            {isAuthenticated && auth.user ? (
+              <>
+                <img
+                  src={auth.user.photoURL || "https://www.gravatar.com/avatar/?d=mp"}
+                  alt=""
+                  className="h-8 w-8 rounded-full"
+                />
+                <div className="hidden max-w-[130px] truncate text-xs text-slate-700 sm:block">
+                  <p className="truncate font-medium">{auth.user.displayName || "Signed in"}</p>
+                  <p className="truncate text-slate-500">{auth.user.email || ""}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void doSignOut();
+                  }}
+                  className="dd-btn dd-btn--secondary h-11 min-h-[44px] px-3 text-xs"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  void startSignin();
+                }}
+                className="dd-btn dd-btn--secondary h-11 min-h-[44px] px-3 text-xs"
+                disabled={auth.status === "loading"}
+                aria-describedby="dashboard-storage-mode"
+              >
+                {auth.status === "loading" ? "Checking sign-in..." : "Sign in to sync"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="mx-auto flex w-full max-w-[var(--container-max-width)] items-center justify-between gap-3 px-4 py-2 text-xs text-slate-600">
+          <span id="dashboard-storage-mode" className="rounded-full border border-slate-200 px-2 py-1" role="status">
+            {isAuthenticated && repositoryMode === "cloud"
+              ? `Cloud sync: ${syncLabel}`
+              : localPersistenceStatus === "degraded"
+                ? "Local mode · Persistence degraded"
+              : isAuthenticated
+                ? `Local mode · Cloud sync ${syncLabel.toLowerCase()}`
+              : auth.status === "loading"
+                ? "Local mode · Checking cloud sign-in"
+                : "Local mode"}
+          </span>
+          {localPersistenceStatus === "degraded" ? (
+            <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-800" role="alert">
+              {localPersistenceError
+                ?? "Local persistence is degraded. Latest work is visible only in this tab and is not durably stored."}
+            </span>
+          ) : null}
+          {migrationNotice ? (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">{migrationNotice.label}</span>
+          ) : null}
+          {!isAuthenticated && auth.lastError ? (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-800" role="alert">
+              Cloud sign-in unavailable: {auth.lastError} Local data remains available.
+            </span>
+          ) : null}
+          {lastActionError ? (
+            <button
+              type="button"
+              onClick={() => {
+                clearLastActionError();
+              }}
+              className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-rose-700"
+              title="Clear error"
+            >
+              Sync error, tap to clear
+            </button>
+          ) : null}
+          {migrationNotice ? (
+            <span className="flex items-center gap-2">
+              {migrationNotice.hasCloud ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void keepCloud();
+                  }}
+                  className="rounded-full border border-slate-300 bg-white px-2 py-1 text-slate-700 disabled:opacity-60"
+                  disabled={isImporting || migrationState.phase !== "required"}
+                >
+                  {migrationNotice.keepCloudLabel}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void startImport();
+                }}
+                className="rounded-full bg-emerald-700 px-2 py-1 text-white disabled:opacity-60"
+                disabled={isImporting || migrationState.phase !== "required"}
+              >
+                {isImporting ? "Working..." : migrationNotice.importLabel}
+              </button>
+            </span>
+          ) : null}
         </div>
 
         <div

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, FormEvent } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { GitHubProjectMetadata } from "../../../components/GitHubProjectMetadata";
 import { PROJECT_SECTIONS } from "../../../lib/constants";
 import { generateAiContext } from "../../../lib/markdown/generateAiContext";
 import { generateProjectResume } from "../../../lib/markdown/generateProjectResume";
@@ -158,8 +159,8 @@ export default function ProjectWorkbenchPage({ params }: { params: { projectId: 
     if (!ideaText.trim()) return;
     addIdea({
       projectId: project.id,
-      text: ideaText.trim(),
-      description: ideaDescription.trim(),
+      text: ideaText,
+      description: ideaDescription,
       status: ideaStatus,
       priority: ideaPriority,
       source: "other",
@@ -174,8 +175,8 @@ export default function ProjectWorkbenchPage({ params }: { params: { projectId: 
     if (!taskTitle.trim()) return;
     addTask({
       projectId: project.id,
-      title: taskTitle.trim(),
-      details: taskDetails.trim(),
+      title: taskTitle,
+      details: taskDetails,
       type: taskType,
       status: "backlog",
       priority: taskPriority,
@@ -195,7 +196,7 @@ export default function ProjectWorkbenchPage({ params }: { params: { projectId: 
     if (!brainText.trim()) return;
     addBrainDump({
       projectId: project.id,
-      text: brainText.trim(),
+      text: brainText,
     });
     setBrainText("");
   };
@@ -961,6 +962,7 @@ export default function ProjectWorkbenchPage({ params }: { params: { projectId: 
         <section className="dd-shell-card px-5 py-5 sm:px-6">
           <p className="dd-subtitle">Project workbench</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{project.title}</h1>
+          <GitHubProjectMetadata project={project} />
 
           <dl className="dd-kv-pair mt-3 text-sm">
             <dt className="font-medium text-slate-600">Status</dt>

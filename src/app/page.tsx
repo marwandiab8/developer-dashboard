@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import { GitHubProjectMetadata } from "../components/GitHubProjectMetadata";
 import { useDashboard } from "../lib/repositories/repositoryContext";
 import { toDisplayDate } from "../lib/utils/time";
 
@@ -101,6 +102,7 @@ export default function DashboardPage() {
             {continueWork.map(({ project, inProgress, lastIdea }) => (
               <article key={project.id} className="rounded-xl border border-slate-200 p-3">
                 <h3 className="font-semibold">{project.title}</h3>
+                <GitHubProjectMetadata project={project} compact />
                 <p className="mt-1 text-sm text-slate-600">
                   Last worked: {toDisplayDate(project.lastWorkedAt)}
                 </p>

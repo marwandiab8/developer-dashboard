@@ -12,17 +12,23 @@ const projects = [
 ] as const;
 
 const runQuickCapture = vi.fn();
+let isMutationReady = true;
 
 vi.mock("../src/lib/repositories/repositoryContext", () => ({
   useDashboard: () => ({
     data: { projects },
+    isMutationReady,
     runQuickCapture,
   }),
 }));
 
 const flushMicrotasks = async () => {
-  await Promise.resolve();
-  await Promise.resolve();
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 };
 
 describe("QuickCaptureDialog", () => {
@@ -31,7 +37,8 @@ describe("QuickCaptureDialog", () => {
   beforeEach(() => {
     localStorage.clear();
     runQuickCapture.mockReset();
-    runQuickCapture.mockImplementation(() => undefined);
+    runQuickCapture.mockImplementation(() => ({ ok: true }));
+    isMutationReady = true;
     originalConfirm = window.confirm;
   });
 
@@ -168,6 +175,37 @@ describe("QuickCaptureDialog", () => {
     close();
   });
 
+  it("uses trimming only for blank validation and submits authored whitespace unchanged", async () => {
+    const onClose = vi.fn();
+    const { container, close } = renderDialog({ projectId: projects[0].id, onClose });
+    await flushMicrotasks();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const exact = "  indented\n    child\n\n";
+    setTextareaValue(textarea, exact);
+
+    act(() => {
+      textarea.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await flushMicrotasks();
+
+    expect(runQuickCapture).toHaveBeenCalledWith({
+      projectId: projects[0].id,
+      text: exact,
+      classification: "idea",
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    close();
+  });
+
   it("supports save and add another", async () => {
     const { container, close } = renderDialog({ projectId: projects[0].id });
 
@@ -219,8 +257,78 @@ describe("QuickCaptureDialog", () => {
 
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("preserve this text");
     const status = container.querySelector("span[aria-live='polite']") as HTMLSpanElement;
-    expect(status.textContent).toContain("Could not save capture");
+    expect(status.textContent).toBe("capture failed");
 
+    close();
+  });
+
+  it("surfaces the authoritative validation result without closing", async () => {
+    runQuickCapture.mockResolvedValue({ ok: false, error: "Quick capture requires text." });
+    const onClose = vi.fn();
+    const { container, close } = renderDialog({ projectId: projects[0].id, onClose });
+    await flushMicrotasks();
+
+    act(() => {
+      window.dispatchEvent(new Event("developer-dashboard:quick-capture-save"));
+    });
+    await flushMicrotasks();
+
+    expect(runQuickCapture).toHaveBeenCalledWith({
+      projectId: projects[0].id,
+      text: "",
+      classification: "idea",
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.querySelector("span[aria-live='polite']")?.textContent)
+      .toBe("Quick capture requires text.");
+    close();
+  });
+
+  it("keeps the exact draft and provider error when a mutation is rejected", async () => {
+    const providerError = "Dashboard data is still loading for the current account.";
+    runQuickCapture.mockResolvedValue({ ok: false, error: providerError });
+    const onClose = vi.fn();
+    const { container, close } = renderDialog({ projectId: projects[0].id, onClose });
+    await flushMicrotasks();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const exactDraft = "  keep this draft\n    exactly\n";
+    setTextareaValue(textarea, exactDraft);
+    act(() => {
+      window.dispatchEvent(new Event("developer-dashboard:quick-capture-save"));
+    });
+    await flushMicrotasks();
+
+    expect(runQuickCapture).toHaveBeenCalledOnce();
+    expect(textarea.value).toBe(exactDraft);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.querySelector("span[aria-live='polite']")?.textContent).toBe(providerError);
+    expect(container.textContent).not.toContain("Saved.");
+    expect(localStorage.getItem(QUICK_CAPTURE_PREFERENCES_KEY)).toBeNull();
+    close();
+  });
+
+  it("disables saving while mutations are not ready but still honors a forced failure result", async () => {
+    isMutationReady = false;
+    const providerError = "Dashboard data is still loading for the current account.";
+    runQuickCapture.mockResolvedValue({ ok: false, error: providerError });
+    const { container, close } = renderDialog({ projectId: projects[0].id });
+    await flushMicrotasks();
+
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    setTextareaValue(textarea, "Do not discard this loading-state draft");
+    const submit = container.querySelector("button[type='submit']") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect(container.querySelector("span[aria-live='polite']")?.textContent)
+      .toBe("Dashboard is still loading");
+
+    act(() => {
+      window.dispatchEvent(new Event("developer-dashboard:quick-capture-save"));
+    });
+    await flushMicrotasks();
+    expect(runQuickCapture).toHaveBeenCalledOnce();
+    expect(textarea.value).toBe("Do not discard this loading-state draft");
+    expect(container.querySelector("span[aria-live='polite']")?.textContent).toBe(providerError);
     close();
   });
 

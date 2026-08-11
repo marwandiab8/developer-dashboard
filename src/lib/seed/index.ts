@@ -13,9 +13,9 @@ import {
   Note,
   ImportantLink,
 } from "../models";
-import { nowIso } from "../utils/time";
-
-const now = nowIso();
+// Seed timestamps are content, not runtime state. Keeping them stable makes an
+// untouched seed semantically identical across page loads and app releases.
+const now = "2026-07-28T00:00:00.000Z";
 
 export const seedDashboardData = (): DashboardData => {
   const projectIds = {

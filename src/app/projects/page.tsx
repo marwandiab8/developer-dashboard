@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
+import { GitHubProjectMetadata } from "../../components/GitHubProjectMetadata";
+import { GitHubSyncPanel } from "../../components/GitHubSyncPanel";
 import { useDashboard } from "../../lib/repositories/repositoryContext";
 
 export default function ProjectsPage() {
@@ -21,6 +23,8 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-4">
+      <GitHubSyncPanel />
+
       <form onSubmit={onSubmit} className="grid gap-3 rounded-lg border border-slate-200 p-4 sm:grid-cols-3">
         <h1 className="sm:col-span-3 text-xl font-semibold">Projects</h1>
         <label className="block sm:col-span-1">
@@ -58,6 +62,7 @@ export default function ProjectsPage() {
                 {project.title}
               </Link>
               <p className="text-sm text-slate-600">{project.purpose}</p>
+              <GitHubProjectMetadata project={project} compact />
             </div>
           ))}
         </div>
@@ -67,11 +72,14 @@ export default function ProjectsPage() {
         <h2 className="font-semibold">All projects</h2>
         <ul className="mt-3 space-y-2">
           {data.projects.map((project) => (
-            <li key={project.id} className="flex items-center justify-between">
+            <li key={project.id} className="flex flex-wrap items-center justify-between gap-2">
               <Link href={`/projects/${project.id}`} className="text-sky-700 hover:underline">
                 {project.title}
               </Link>
-              <span className="text-xs uppercase text-slate-500">{project.status}</span>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <GitHubProjectMetadata project={project} compact />
+                <span className="text-xs uppercase text-slate-500">{project.status}</span>
+              </div>
             </li>
           ))}
         </ul>

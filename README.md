@@ -2,47 +2,71 @@
 
 Personal external development brain for fast idea capture, project continuity, architectural memory, and resume-ready context.
 
-## Purpose
+## Capabilities
 
-The app is designed to keep you productive across many software projects by making it easy to:
+- Dashboard home and complete per-project workbench
+- Global and project-specific Quick Capture
+- Ideas with idea-to-task conversion
+- Tasks, sessions, blockers, and next actions
+- Notes, links, architecture decisions, and Codex prompts
+- Scratchpads and brain dumps
+- Continue Where You Left Off
+- PROJECT_RESUME.md and AI_CONTEXT.md generation
+- Firebase Authentication and user-scoped Firestore persistence
+- Secure server-side GitHub repository import and synchronization
 
-- Capture ideas quickly from any device
-- Preserve architecture decisions and project rationale
-- Track tasks, sessions, prompts, links, notes, and activity
-- Generate resume/context artifacts for humans and AI coding assistants
+GitHub-backed projects remain normal dashboard workbenches. Synchronization adds namespaced source metadata without replacing protected manual project fields or related work.
 
-## Tech stack
+## GitHub synchronization
 
-- Next.js (App Router)
-- TypeScript
+Milestone 2 imports every repository visible to the configured fine-grained GitHub token:
+
+- Public
+- Private
+- Archived
+- Forked
+
+There is no repository-selection screen or per-repository allowlist.
+
+The GitHub token and dashboard owner UID are server-side Secret Manager values. They never enter browser code, NEXT_PUBLIC variables, Firestore, localStorage, logs, tests, reports, or Git.
+
+A fine-grained token is limited to one selected resource owner. All repositories therefore means all token-visible repositories for that owner. Repositories spanning several owners require a future multi-token or GitHub App design.
+
+See:
+
+- docs/GITHUB_IMPORT_CONTRACT.md
+- docs/SECURITY.md
+- docs/FIREBASE_SETUP.md
+- docs/DEPLOYMENT.md
+
+## Technology
+
+- Next.js App Router
+- Strict TypeScript
+- React
 - Tailwind CSS
-- Local-first persistence via browser storage (Phase 1A)
-- Firebase Authentication + Firestore + Hosting planned for Phase 1B
+- Zod
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Functions v2
+- Firebase App Hosting
 
-## Current status
+## Local commands
 
-Phase 1A is implemented as a local-first brain with these capabilities:
+    npm install
+    npm run dev
+    npm run lint
+    npm run typecheck
+    npm test
+    npm run test:rules
+    npm run build
 
-- Dashboard home with project/task/idea/session views
-- Per-project Workbench
-- Quick Capture (project + text, classification optional)
-- Idea inbox + task conversion flow
-- Brain Dump and Scratchpad
-- Development sessions
-- Architecture Decisions, Codex prompts, notes, links, activity
-- Resume generation (`PROJECT_RESUME.md`) and AI context generation (`AI_CONTEXT.md`)
-- Seed data for core projects
-- Search across major entities
+Functions and Firestore validation are documented in docs/SETUP.md.
 
-## Scripts
+## Current release status
 
-- `npm run install` (if needed) to install dependencies
-- `npm run dev` – start local dev server
-- `npm run lint` – run linting
-- `npm run typecheck` – run TypeScript check
-- `npm test` – run Vitest suite
-- `npm run build` – build Next.js production bundle
+Firebase Authentication, UID-scoped Firestore persistence, signed-out local mode, migration, App Hosting configuration, and owner-only GitHub synchronization are implemented in the current working tree. If browser storage rejects a local save, current-tab work stays visible across authentication reruns with an explicit not-durable warning and the Dashboard remains usable. Guarded cloud-recovery replay refuses to overwrite later remote edits, including remote-only fields before a whole-document delete. Authored prose/Markdown is not trimmed by capture, reducer, persistence, or hydration paths. The first successful owner-triggered manual import enables later scheduled synchronization; successful scheduled-day completion is independent of later manual status and prevents duplicate same-day delivery from rewriting its audit.
 
-## Developer notes
+The GitHub `main` branch is stale and does not yet contain this working tree. Historical records show that Functions, the scheduler, and App Hosting were deployed on 2026-08-06, but production and physical cross-device/browser behavior were not reverified during the current remediation and must not be described as currently verified. No deployment is authorized by this document.
 
-Data is intentionally repository-agnostic and persisted locally so you can start using the dashboard immediately. Future releases swap the repository layer for Firebase without changing the app domain model.
+See `CODEX_STATUS.md` for the sole current operational record and the exact local validation evidence.

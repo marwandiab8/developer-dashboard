@@ -96,6 +96,46 @@ describe("dashboard reducer", () => {
     expect(updated?.summary).toBe("Session complete");
   });
 
+  it("preserves authored whitespace when appending a session note", () => {
+    const seed = seedDashboardData();
+    const session = seed.developmentSessions[0];
+    const existingNotes = "\n  existing session note  \n";
+    const appendedNote = "  indented\n    child\n\n";
+    const withExactNotes = {
+      ...seed,
+      developmentSessions: seed.developmentSessions.map((entry) =>
+        entry.id === session.id ? { ...entry, notes: existingNotes } : entry,
+      ),
+    };
+
+    const next = dashboardReducer(withExactNotes, {
+      type: "session_note_append",
+      payload: { id: session.id, note: appendedNote },
+    });
+
+    expect(next.developmentSessions.find((entry) => entry.id === session.id)?.notes)
+      .toBe(`${existingNotes}\n\n${appendedNote}`);
+  });
+
+  it("does not duplicate a deterministic GitHub activity", () => {
+    const seed = seedDashboardData();
+    const activity = {
+      id: "89c84c74-f28d-5e09-8dd1-c6e8f5ee1fd2",
+      projectId: seed.projects[0].id,
+      type: "github_repository_updated" as const,
+      summary: "Updated GitHub repository metadata",
+      entityType: "project",
+      entityId: seed.projects[0].id,
+      metadata: "github:12345",
+      createdAt: "2026-08-07T12:00:00.000Z",
+    };
+
+    const once = dashboardReducer(seed, { type: "activity_add", payload: activity });
+    const twice = dashboardReducer(once, { type: "activity_add", payload: activity });
+
+    expect(twice.activities.filter((entry) => entry.id === activity.id)).toHaveLength(1);
+  });
+
   it("supports schema migrations with local storage fallback", () => {
     const oldPayload = { ...seedDashboardData(), schemaVersion: SCHEMA_VERSION - 1, activities: [] };
     const migrated = createMigrationLayer(oldPayload);

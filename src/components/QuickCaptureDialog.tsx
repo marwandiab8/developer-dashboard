@@ -61,7 +61,7 @@ function mergeRecentProjectIds(projectId: string, previous: QuickCapturePrefs["r
 const classificationOptions: CaptureClassification[] = ["idea", "brain_dump", "task", "bug", "note", "scratchpad"];
 
 export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectId }: Props) {
-  const { data, runQuickCapture } = useDashboard();
+  const { data, isMutationReady, runQuickCapture } = useDashboard();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [projectId, setProjectId] = useState(() => {
     const fallbackPrefs = readPrefs();
@@ -109,7 +109,10 @@ export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectI
     return projectCandidates.filter((project) => project.title.toLowerCase().includes(query));
   }, [projectCandidates, projectSearch, showProjectSearch]);
 
-  const canSubmit = Boolean(projectId) && text.trim().length > 0 && !isSaving;
+  const canSubmit = Boolean(projectId)
+    && text.trim().length > 0
+    && isMutationReady
+    && !isSaving;
 
   const hasUnsavedText = useCallback(
     () => {
@@ -120,7 +123,7 @@ export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectI
   );
 
   const getDraftText = useCallback(() => {
-    return (textRef.current || textareaRef.current?.value || "").trim();
+    return textRef.current || textareaRef.current?.value || "";
   }, []);
 
 
@@ -136,19 +139,23 @@ export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectI
     setProjectSearch("");
   }, []);
 
-  const performSubmit = useCallback(() => {
+  const performSubmit = useCallback(async () => {
     const draftText = getDraftText();
-    if (!Boolean(projectId) || !draftText || isSaving) return;
+    if (isSaving) return;
 
     setIsSaving(true);
     setStatus("");
 
     try {
-      runQuickCapture({
+      const result = await runQuickCapture({
         projectId,
         text: draftText,
         classification,
       });
+      if (!result.ok) {
+        setStatus(result.error);
+        return;
+      }
       setStatus(saveAndAddAnother ? "Saved. Add another." : "Saved.");
 
       writePrefs({
@@ -157,15 +164,17 @@ export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectI
       });
 
       if (saveAndAddAnother) {
+        textRef.current = "";
         setText("");
         setSaveAndAddAnother(false);
       } else {
+        textRef.current = "";
         setText("");
         setClassification("idea");
         onClose();
       }
-    } catch {
-      setStatus("Could not save capture. Try again.");
+    } catch (cause) {
+      setStatus(cause instanceof Error ? cause.message : "Could not save capture. Try again.");
     } finally {
       setIsSaving(false);
       setPrefs(readPrefs());
@@ -464,7 +473,7 @@ export function QuickCaptureDialog({ open, onClose, projectId: requestedProjectI
 
           <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
             <span className="text-xs text-slate-600" aria-live="polite">
-              {status || "Ready"}
+              {status || (isMutationReady ? "Ready" : "Dashboard is still loading")}
             </span>
             <button
               type="submit"

@@ -1,25 +1,60 @@
 # Roadmap
 
-## Phase 1A (current)
+## Phase 1A: local development brain
 
-- Local-first repository and UI scaffold
-- Dashboard home and per-project Workbench
-- Quick Capture, Ideas, Tasks, Brain Dump, Scratchpad, Sessions
-- Architecture, prompts, notes, links, activity
+Complete:
+
+- Dashboard home and per-project workbench
+- Quick Capture, ideas, tasks, brain dumps, scratchpads, and sessions
+- Architecture decisions, Codex prompts, notes, links, and activity
 - Search and seed data
-- Resume + AI context generation
+- PROJECT_RESUME.md and AI_CONTEXT.md generation
 
-## Phase 1B (planned)
+## Phase 1B Milestone 1: Firebase foundation and GitHub merge contract
+
+Complete:
 
 - Firebase Authentication
-- Firestore persistence adapter
-- Hosting integration
-- Repository adapter switch from local to remote
+- User-scoped Firestore repository architecture
+- Immutable GitHub repository ID
+- Centralized protected-field merge policy
+- Zod validation
+- Duplicate prevention and rename handling
+
+## Phase 1B Milestone 2: secure GitHub synchronization
+
+Implemented in the current local working tree:
+
+- Owner-only Firebase Functions v2 callables
+- Server-side Secret Manager token and owner UID
+- All token-visible repositories with no selection UI
+- Public, private, archived, and forked repository support
+- Pagination beyond 100 repositories
+- Bounded enrichment and partial-failure preservation
+- Rate-limit reporting
+- Safe Firebase association detection
+- Conflict-safe Firestore mutation replay, immutable receipts, and deterministic activity
+- Shared lease plus status-independent successful-day deduplication for callable and daily scheduled synchronization
+- Dashboard connection, import, sync, count, error, badge, link, and project-status UI
+- Manual-first-import gate and write-once first-success timestamp
+- Signed-out local mode, current-tab continuity on browser-storage failure, and explicit persistence-degraded status
+- Atomic create-if-absent local-to-cloud migration
+- Backend-only synchronization state enforced by Firestore rules
+- Direct allowlisted Firebase configuration discovery without repository-tree enumeration
+
+Current release state:
+
+- This working tree has not been committed or pushed; GitHub `main` remains stale.
+- Local validation is recorded in `CODEX_STATUS.md`.
+- Historical evidence records configured secrets and successful deployments on 2026-08-06; production was not reverified in the current remediation.
+- Automated realtime-ordering coverage is complete; physical multi-device/browser validation was not performed in this remediation.
+- Any deployment or live verification requires a separately approved operation.
 
 ## Later phases
 
-- GitHub integration
-- Automatic repository scanning and commit mapping
-- Live Codex/assistant process control
+- Multi-token support for repositories spanning several GitHub resource owners
+- GitHub App installation model if organization-wide coverage is required
+- Broader conflict-resolution UI for concurrent manual edits
+- Live Codex or assistant process control
 - Voice and Apple Shortcuts capture
 - Automatic architecture and changelog summaries

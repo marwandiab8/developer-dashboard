@@ -1,10 +1,16 @@
 import { z } from "zod";
 import {
+  GITHUB_LAST_WORKED_AT_SOURCES,
+  GITHUB_REPOSITORY_VISIBILITIES,
   ActivityType,
   IdeaPriority,
   IdeaSource,
   IdeaStatus,
   BrainDumpStatus,
+  ManualProjectStatus,
+  ExternalActivityStatus,
+  ExternalAssociationStatus,
+  ExternalSourceType,
   TaskStatus,
   TaskType,
   ProjectStatus,
@@ -14,16 +20,83 @@ import {
   CaptureClassification,
 } from "./models";
 
+const externalSourceTypeSchema = z.enum(["github"] as const satisfies readonly ExternalSourceType[]);
+const externalAssociationStatusSchema = z.enum([
+  "unknown",
+  "not_detected",
+  "detected",
+  "confirmed",
+  "removed",
+] as const satisfies readonly ExternalAssociationStatus[]);
+const manualProjectStatusSchema = z.enum([
+  "planning",
+  "active",
+  "paused",
+  "blocked",
+  "completed",
+  "archived",
+] as const satisfies readonly ManualProjectStatus[]);
+const externalActivityStatusSchema = z.enum([
+  "active_recently",
+  "quiet",
+  "stale",
+  "never_committed",
+  "unavailable",
+] as const satisfies readonly ExternalActivityStatus[]);
+export const externalSourceAssociationSchema = z.object({
+  status: externalAssociationStatusSchema,
+  evidence: z.string(),
+  detectedAt: z.string().datetime(),
+  confirmedAt: z.string().datetime().optional(),
+});
+
+export const externalProjectSourceGithubSchema = z.object({
+  sourceType: externalSourceTypeSchema,
+  externalRepositoryId: z.string(),
+  ownerLogin: z.string(),
+  repositoryName: z.string(),
+  repositoryFullName: z.string(),
+  repositoryUrl: z.string().url(),
+  defaultBranch: z.string(),
+  visibility: z.enum(GITHUB_REPOSITORY_VISIBILITIES),
+  isArchived: z.boolean(),
+  isFork: z.boolean(),
+  description: z.string(),
+  primaryLanguage: z.string(),
+  topics: z.array(z.string()),
+  createdDate: z.string().datetime(),
+  updatedDate: z.string().datetime(),
+  pushedDate: z.string().datetime(),
+  latestKnownPersonalCommitDate: z.string().datetime().nullable(),
+  latestKnownPersonalCommitMessage: z.string().nullable(),
+  lastWorkedAt: z.string().datetime(),
+  lastWorkedAtSource: z.enum(GITHUB_LAST_WORKED_AT_SOURCES),
+  openIssueCount: z.number().int().min(0).nullable(),
+  openPullRequestCount: z.number().int().min(0).nullable(),
+  synchronizationTimestamp: z.string().datetime(),
+  synchronizationStatus: z.enum(["success", "failed", "unavailable"]),
+  sourceError: z.string().nullable().optional(),
+  firebaseAssociation: externalSourceAssociationSchema,
+});
+
+export const externalSourcesSchema = z.object({
+  github: externalProjectSourceGithubSchema.optional(),
+});
+
 export const projectSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1),
   slug: z.string().min(1),
   purpose: z.string().min(1),
   status: z.enum(["active", "on_hold", "completed", "archived"] as const satisfies readonly ProjectStatus[]),
+  manualStatus: manualProjectStatusSchema.optional(),
   currentBranch: z.string(),
   currentObjective: z.string(),
   currentBlocker: z.string(),
   nextRecommendedTask: z.string(),
+  externalSources: externalSourcesSchema.optional(),
+  externalActivityStatus: externalActivityStatusSchema.optional(),
+  externalActivityUpdatedAt: z.string().datetime().optional(),
   lastWorkedAt: z.string().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -150,9 +223,12 @@ export const developmentSessionSchema = z.object({
 });
 
 export const activityEventSchema = z.object({
-  id: z.string().uuid(),
+  id: z.union([
+    z.string().uuid(),
+    z.string().regex(/^github-[a-f0-9]{32}$/, "Invalid legacy GitHub activity ID"),
+  ]),
   projectId: z.string().uuid(),
-  type: z.enum(["project_created", "idea_captured", "idea_converted", "task_started", "task_completed", "decision_accepted", "prompt_used", "session_started", "session_completed", "resume_generated", "ai_context_generated"] as const satisfies readonly ActivityType[]),
+  type: z.enum(["project_created", "idea_captured", "idea_converted", "task_started", "task_completed", "decision_accepted", "prompt_used", "session_started", "session_completed", "resume_generated", "ai_context_generated", "github_repository_imported", "github_repository_updated", "github_repository_unavailable"] as const satisfies readonly ActivityType[]),
   summary: z.string(),
   entityType: z.string(),
   entityId: z.string(),

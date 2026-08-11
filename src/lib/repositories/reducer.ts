@@ -322,7 +322,9 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
         session.id === action.payload.id
           ? ({
               ...session,
-              notes: `${session.notes}\n\n${action.payload.note}`.trim(),
+              notes: session.notes.length > 0
+                ? `${session.notes}\n\n${action.payload.note}`
+                : action.payload.note,
               tasksWorkedOn: session.tasksWorkedOn,
             } as typeof session)
           : session,
@@ -332,6 +334,10 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "activity_add":
+      if (state.activities.some((activity) => activity.id === action.payload.id)) {
+        return state;
+      }
+
       return {
         ...state,
         activities: [action.payload, ...state.activities],

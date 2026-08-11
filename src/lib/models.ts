@@ -11,6 +11,19 @@ export type DecisionStatus = "proposed" | "accepted" | "replaced" | "deferred" |
 export type PromptStatus = "draft" | "ready" | "used" | "archived";
 export type BrainDumpStatus = "active" | "converted" | "archived";
 export type SessionStatus = "active" | "completed";
+export type ManualProjectStatus = "planning" | "active" | "paused" | "blocked" | "completed" | "archived";
+export type ExternalActivityStatus = "active_recently" | "quiet" | "stale" | "never_committed" | "unavailable";
+export type ExternalSyncStatus = "success" | "failed" | "unavailable";
+export type ExternalSourceType = "github";
+export type ExternalAssociationStatus = "unknown" | "not_detected" | "detected" | "confirmed" | "removed";
+export const GITHUB_REPOSITORY_VISIBILITIES = ["public", "private", "internal"] as const;
+export type GithubRepositoryVisibility = (typeof GITHUB_REPOSITORY_VISIBILITIES)[number];
+export const GITHUB_LAST_WORKED_AT_SOURCES = [
+  "personal_commit",
+  "repository_pushed",
+  "repository_updated",
+] as const;
+export type GithubLastWorkedAtSource = (typeof GITHUB_LAST_WORKED_AT_SOURCES)[number];
 
 export type ActivityType =
   | "project_created"
@@ -23,7 +36,10 @@ export type ActivityType =
   | "session_started"
   | "session_completed"
   | "resume_generated"
-  | "ai_context_generated";
+  | "ai_context_generated"
+  | "github_repository_imported"
+  | "github_repository_updated"
+  | "github_repository_unavailable";
 
 export type CaptureClassification =
   | "idea"
@@ -33,16 +49,60 @@ export type CaptureClassification =
   | "bug"
   | "note";
 
+export interface ExternalSourceAssociation {
+  status: ExternalAssociationStatus;
+  evidence: string;
+  detectedAt: string;
+  confirmedAt?: string;
+}
+
+export interface ExternalProjectSourceGithub {
+  sourceType: ExternalSourceType;
+  externalRepositoryId: string;
+  ownerLogin: string;
+  repositoryName: string;
+  repositoryFullName: string;
+  repositoryUrl: string;
+  defaultBranch: string;
+  visibility: GithubRepositoryVisibility;
+  isArchived: boolean;
+  isFork: boolean;
+  description: string;
+  primaryLanguage: string;
+  topics: string[];
+  createdDate: string;
+  updatedDate: string;
+  pushedDate: string;
+  latestKnownPersonalCommitDate: string | null;
+  latestKnownPersonalCommitMessage: string | null;
+  lastWorkedAt: string;
+  lastWorkedAtSource: GithubLastWorkedAtSource;
+  openIssueCount: number | null;
+  openPullRequestCount: number | null;
+  synchronizationTimestamp: string;
+  synchronizationStatus: ExternalSyncStatus;
+  sourceError?: string | null;
+  firebaseAssociation: ExternalSourceAssociation;
+}
+
+export interface ProjectExternalSources {
+  github?: ExternalProjectSourceGithub;
+}
+
 export interface Project {
   id: string;
   title: string;
   slug: string;
   purpose: string;
   status: ProjectStatus;
+  manualStatus?: ManualProjectStatus;
   currentBranch: string;
   currentObjective: string;
   currentBlocker: string;
   nextRecommendedTask: string;
+  externalSources?: ProjectExternalSources;
+  externalActivityStatus?: ExternalActivityStatus;
+  externalActivityUpdatedAt?: string;
   lastWorkedAt?: string;
   createdAt: string;
   updatedAt: string;
