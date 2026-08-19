@@ -9,7 +9,7 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 - Release commit `066a7228d9ff0b92e3ed74d26039fadba4b6bd96` (`feat: add shared idea-to-Codex workflow`) is on local `main` and `origin/main`. It contains the schema version 2 shared Idea → Task → ChatGPT prompt → Codex work-session workflow, task/project timelines and active-time totals, task detail route, simplified interface, and bounded OAuth-protected MCP resource-server implementation.
 - Existing local-first storage, Firebase Authentication, UID-scoped Firestore, rules, GitHub synchronization ownership, routes, and Codex ingestion were extended rather than replaced. GitHub remains additive and cannot overwrite Dashboard-owned workflow history.
 - Firestore rules, the App Hosting frontend, and `ingestCodexSession` are deployed to the existing `marwan-developer-dashboard` project. The public Dashboard URL is `https://developer-dashboard--marwan-developer-dashboard.us-east4.hosted.app`.
-- `dashboardMcp` is not deployed and ChatGPT is not connected. No compatible OAuth issuer/client or owner subject is configured, so no authenticated ChatGPT MCP tool call has occurred. The remaining provider and connection gate is documented in `docs/CHATGPT_MCP.md`.
+- `dashboardMcp` is deployed with the configured Auth0 issuer, audience, JWKS, resource URL, and exact server-side owner subject. ChatGPT is not connected and no authenticated ChatGPT MCP tool call has occurred because the registered ChatGPT third-party client still requires an explicit Auth0 user-delegated client grant for this API. The remaining connection gate is documented in `docs/CHATGPT_MCP.md`.
 - No bulk or destructive production-data migration ran. Version 1 records remain readable through backward-compatible hydration and the idempotent version 2 migration; no legacy record, collection, or ID was deleted or rewritten.
 - The pre-existing untracked `remoteconfig.template.json` remains untracked and was not included in the release.
 
@@ -25,6 +25,15 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 - Live browser checks passed for desktop Home, Projects, Ideas, Tasks, Project Overview, Project Timeline, and Task Detail plus mobile Home and Project Overview. There were zero application console errors, runtime exceptions, failed application responses, blocking overlays, raw internal event names, duplicate global menus, or horizontal overflow. The Firebase-configuration warning was absent.
 - The production Google sign-in button successfully reached the Google Accounts authorization handoff. Completing owner sign-in still requires the owner's interactive Google consent; no GitHub synchronization or repository import was triggered.
 - No temporary production test records were created. Exact relationship, idempotency, paused-time exclusion, duplicate-duration protection, and explicit-completion behavior were verified by the local Functions integration suites rather than by ingesting a real production task.
+
+## MCP production deployment evidence — 2026-08-19
+
+- `dashboardMcp` deployed successfully as an ACTIVE Node.js 24 v2 HTTPS Function in `us-east4` at `https://us-east4-marwan-developer-dashboard.cloudfunctions.net/dashboardMcp`.
+- Firebase binds only `DASHBOARD_OWNER_UID` and `MCP_OWNER_SUBJECT` as Function secrets. The four reviewed non-secret parameters are `MCP_OAUTH_ISSUER`, `MCP_OAUTH_AUDIENCE`, `MCP_OAUTH_JWKS_URI`, and `MCP_RESOURCE_URL`; none is exposed to browser code.
+- Protected-resource metadata returns HTTP 200 with `Cache-Control: no-store`, the exact Dashboard MCP resource identifier, the exact Auth0 issuer, and only `dashboard:read` plus `dashboard:write` scopes.
+- An unauthenticated MCP initialize request returns sanitized HTTP 401 with `Cache-Control: no-store` and the required `WWW-Authenticate` protected-resource metadata challenge.
+- Auth0 public discovery publishes the exact trailing-slash issuer, remote JWKS, authorization/token/registration endpoints, PKCE `S256`, DCR, CIMD, and public-client token authentication support.
+- A no-login authorization preflight confirmed that the imported ChatGPT client is registered, but Auth0 correctly denied the Dashboard audience because the third-party client does not yet have an explicit user-delegated client grant. No token was issued and no Dashboard request or data write occurred.
 
 ## Local shared-workflow validation — 2026-08-19
 
