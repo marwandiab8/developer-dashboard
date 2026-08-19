@@ -63,13 +63,68 @@ export const codexSessionIngestV1Schema = z.object({
       description: z.string().max(16 * KiB).optional(),
       priority: z.enum(["low", "medium", "high", "critical"]).optional(),
     }).strict()).max(25).optional(),
+    activeDurationMs: z.number().int().min(0).max(1000 * 60 * 60 * 24 * 365).optional(),
+    testResults: boundedAuthoredArray(100).optional(),
+    buildResults: boundedAuthoredArray(100).optional(),
+    deploymentStatus: z.string().max(4 * KiB).optional(),
   }).strict().superRefine((session, context) => {
     if (session.startedAt && Date.parse(session.startedAt) > Date.parse(session.endedAt)) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "startedAt must not be after endedAt." });
     }
   }),
+  workflow: z.object({
+    taskId: z.string().uuid(),
+    promptRecordId: z.string().uuid(),
+    workSessionId: z.string().uuid(),
+    promptStatus: z.enum(["completed", "failed"]),
+    workSessionStatus: z.enum(["completed", "paused"]),
+    requestedTaskStatus: z.enum(["open", "ready", "in_progress", "blocked", "completed", "cancelled"]).optional(),
+    taskCompletionAuthorized: z.boolean().optional(),
+  }).strict().optional(),
   source: z.literal("codex"),
-}).strict();
+}).strict().superRefine((payload, context) => {
+  if (!payload.workflow) return;
+  if (payload.session.startedAt === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["session", "startedAt"], message: "Workflow reports require startedAt." });
+  }
+  for (const field of ["activeDurationMs", "testResults", "buildResults", "deploymentStatus"] as const) {
+    if (payload.session[field] === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["session", field], message: `Workflow reports require ${field}.` });
+    }
+  }
+  if (
+    payload.workflow.requestedTaskStatus === "completed"
+    && payload.workflow.taskCompletionAuthorized !== true
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["workflow", "taskCompletionAuthorized"],
+      message: "Task completion requires explicit prior authorization.",
+    });
+  }
+  if (
+    payload.workflow.requestedTaskStatus === "blocked"
+    && !payload.session.currentBlocker?.trim()
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["session", "currentBlocker"],
+      message: "A blocked task requires a current blocker.",
+    });
+  }
+  if (
+    payload.session.startedAt
+    && payload.session.activeDurationMs !== undefined
+    && payload.session.activeDurationMs
+      > Date.parse(payload.session.endedAt) - Date.parse(payload.session.startedAt)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["session", "activeDurationMs"],
+      message: "Active duration cannot exceed elapsed session time.",
+    });
+  }
+});
 
 export const codexProjectVerificationV1Schema = z.object({
   schemaVersion: z.literal(1),
@@ -107,6 +162,12 @@ const containsCredential = (value: unknown): boolean => {
   if (Array.isArray(value)) return value.some(containsCredential);
   if (value && typeof value === "object") return Object.values(value).some(containsCredential);
   return false;
+};
+
+export const assertPayloadExcludesSensitiveContent = (value: unknown): void => {
+  if (containsCredential(value)) {
+    throw new CodexIngestionError("sensitive_content", 400);
+  }
 };
 
 const containsConfiguredValue = (
@@ -151,9 +212,7 @@ export const parseCodexProjectVerificationV1 = (raw: unknown): CodexProjectVerif
   if (!parsed.success) {
     throw new CodexIngestionError("invalid_request", 400);
   }
-  if (containsCredential(parsed.data)) {
-    throw new CodexIngestionError("sensitive_content", 400);
-  }
+  assertPayloadExcludesSensitiveContent(parsed.data);
   return parsed.data;
 };
 
@@ -168,8 +227,6 @@ export const parseCodexSessionIngestV1 = (raw: unknown): CodexSessionIngestV1 =>
   if (!parsed.success) {
     throw new CodexIngestionError("invalid_request", 400);
   }
-  if (containsCredential(parsed.data)) {
-    throw new CodexIngestionError("sensitive_content", 400);
-  }
+  assertPayloadExcludesSensitiveContent(parsed.data);
   return parsed.data;
 };

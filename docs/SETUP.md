@@ -62,6 +62,25 @@ Never paste any secret value into Codex or chat.
 
 Historical read-only metadata checks dated 2026-08-06 recorded only GITHUB_READ_TOKEN and DASHBOARD_OWNER_UID as enabled. They did not include CODEX_INGEST_TOKEN and were not reverified in the current remediation; do not infer current production state from local source alone.
 
+## Local shared-workflow validation
+
+Run the root checks sequentially to reduce peak memory use:
+
+    npm run lint
+    npm run typecheck
+    npm test
+    npm run test:rules
+    npm run build
+
+Then run the Functions checks from `functions/`:
+
+    npm run lint
+    npm run typecheck
+    npm test
+    npm run build
+
+The ChatGPT MCP resource server requires the server-side configuration names listed in `docs/CHATGPT_MCP.md`. Local tests use fixtures and do not require or prove a real OAuth connection. Do not create secrets, deploy the Function/rules, or connect ChatGPT without explicit approval.
+
 ## Codex reporting helper
 
 The shared helper is dependency-free and can be called from another repository by absolute path:

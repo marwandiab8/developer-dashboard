@@ -1,5 +1,6 @@
 import { ActivityEvent, DashboardData, Idea, ArchitectureDecision, DevelopmentSession } from "../models";
 import { toDisplayDate } from "../utils/time";
+import { normalizeIdeaStatus } from "../workflow";
 
 const formatDate = (value?: string | null) => {
   return toDisplayDate(value || undefined);
@@ -50,7 +51,8 @@ export function generateProjectResume(data: DashboardData, projectId: string): s
   const unfinished = tasks.filter((task) => task.status !== "completed" && task.status !== "cancelled");
   const completed = recent(tasks.filter((task) => task.status === "completed"));
   const blockers = tasks.filter((task) => task.status === "blocked");
-  const futureIdeas = recent(ideas.filter((idea) => idea.status === "inbox" || idea.status === "reviewed"));
+  const futureIdeas = recent(ideas.filter((idea) =>
+    ["inbox", "ready_for_review"].includes(normalizeIdeaStatus(idea.status))));
   const recentSessions = recent(sessions);
   const sessionCompleted = uniqueNonEmpty(
     recentSessions.flatMap((session) => session.completedItems ?? []),

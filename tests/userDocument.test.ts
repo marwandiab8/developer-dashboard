@@ -91,7 +91,7 @@ describe("user document mapping", () => {
       preferredLocale: "en-CA",
       preferredTheme: "dark",
     });
-    expect(payload.schemaVersion).toBe(1);
+    expect(payload.schemaVersion).toBe(2);
   });
 
   it("awaits persistence before the first user-document read or write", async () => {

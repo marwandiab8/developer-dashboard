@@ -127,6 +127,30 @@ describe("AppShell authentication states", () => {
     }
   });
 
+  it("uses one compact navigation model without a sidebar, hamburger, or floating add button", () => {
+    authFixture.status = "unauthenticated";
+
+    const { container, root } = mountShell();
+
+    try {
+      expect(container.querySelector("aside")).toBeNull();
+      expect(container.querySelector('button[aria-label="Open primary navigation"]')).toBeNull();
+      expect(container.querySelector(".fixed.rounded-full.bg-emerald-600")).toBeNull();
+
+      const mobileNavigation = container.querySelector('nav[aria-label="Mobile navigation"]');
+      expect(mobileNavigation).not.toBeNull();
+      expect(Array.from(mobileNavigation?.children[0]?.children ?? []).map((item) => item.textContent?.trim()))
+        .toEqual(["Home", "Projects", "Ideas", "+Add"]);
+
+      const desktopNavigation = container.querySelector('nav[aria-label="Primary navigation"]');
+      expect(Array.from(desktopNavigation?.children ?? []).map((item) => item.textContent))
+        .toEqual(["Home", "Projects", "Ideas"]);
+    } finally {
+      root.unmount();
+      document.body.innerHTML = "";
+    }
+  });
+
   it("lets a signed-out user open and save a local quick capture", async () => {
     authFixture.status = "unauthenticated";
     authFixture.user = null;

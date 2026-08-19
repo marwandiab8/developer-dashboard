@@ -11,6 +11,7 @@ import {
   Note,
   Project,
   Task,
+  TaskStatus,
 } from "../models";
 
 export type DashboardAction =
@@ -26,12 +27,16 @@ export type DashboardAction =
   | { type: "idea_add"; payload: Idea }
   | { type: "idea_update"; payload: { id: string; updates: Partial<Idea> } }
   | { type: "idea_archive"; payload: { id: string } }
-  | { type: "idea_to_task"; payload: { ideaId: string; taskId: string; task: Task } }
+  | { type: "idea_to_task"; payload: { ideaId: string; taskId: string; task: Task; convertedAt?: string } }
   | { type: "task_add"; payload: Task }
   | { type: "task_update"; payload: { id: string; updates: Partial<Task> } }
   | { type: "task_start"; payload: { id: string } }
   | { type: "task_block"; payload: { id: string; reason: string } }
   | { type: "task_complete"; payload: { id: string } }
+  | {
+      type: "task_set_status";
+      payload: { id: string; status: TaskStatus; blocker?: string; at: string };
+    }
   | { type: "brain_dump_add"; payload: BrainDump }
   | { type: "brain_dump_update"; payload: { id: string; updates: Partial<BrainDump> } }
   | { type: "brain_dump_delete"; payload: { id: string } }
@@ -46,6 +51,21 @@ export type DashboardAction =
   | { type: "link_update"; payload: { id: string; updates: Partial<ImportantLink> } }
   | { type: "session_start"; payload: DevelopmentSession }
   | { type: "session_end"; payload: { id: string; updates: Partial<DevelopmentSession> } }
+  | { type: "session_pause"; payload: { id: string; at: string; nextStep?: string } }
+  | { type: "session_resume"; payload: { id: string; at: string; resumeFromNote?: string } }
+  | {
+      type: "session_finish";
+      payload: {
+        id: string;
+        at: string;
+        status: "completed" | "abandoned";
+        updates: Partial<DevelopmentSession>;
+      };
+    }
+  | {
+      type: "session_correct";
+      payload: { id: string; activeDurationMs: number; at: string };
+    }
   | { type: "session_note_append"; payload: { id: string; note: string } }
   | { type: "activity_add"; payload: ActivityEvent };
 

@@ -12,10 +12,12 @@ describe("seedDashboardData", () => {
     expect(titles).toContain("Workout App");
   });
 
-  it("contains a sample accepted Gridline idea", () => {
+  it("contains a sample converted Gridline idea with a bidirectional task link", () => {
     const data = seedDashboardData();
     const gridline = data.projects.find((project) => project.title === "GridlineAI");
     const ideas = data.ideas.filter((idea) => idea.projectId === gridline?.id);
     expect(ideas.some((idea) => idea.text.includes("CarPlay arrival location matching"))).toBe(true);
+    const converted = ideas.find((idea) => idea.status === "converted");
+    expect(data.tasks.find((task) => task.id === converted?.linkedTaskId)?.sourceIdeaId).toBe(converted?.id);
   });
 });

@@ -90,6 +90,42 @@ test("rejects unsupported versions, malformed payloads, unsafe bounds, and rever
   })), "invalid_request");
 });
 
+test("requires complete exact workflow reports and explicit task-completion authorization", () => {
+  const workflow = {
+    taskId: "77777777-7777-4777-8777-777777777777",
+    promptRecordId: "88888888-8888-4888-8888-888888888888",
+    workSessionId: "99999999-9999-4999-8999-999999999999",
+    promptStatus: "completed",
+    workSessionStatus: "completed",
+  };
+  const complete = {
+    ...payload({
+      activeDurationMs: 30 * 60_000,
+      testResults: ["Tests passed"],
+      buildResults: ["Build passed"],
+      deploymentStatus: "Not deployed",
+    }),
+    workflow,
+  };
+  assert.equal(parseCodexSessionIngestV1(complete).workflow?.taskId, workflow.taskId);
+  expectIngestionCode(() => parseCodexSessionIngestV1({
+    ...payload(),
+    workflow,
+  }), "invalid_request");
+  expectIngestionCode(() => parseCodexSessionIngestV1({
+    ...complete,
+    workflow: { ...workflow, requestedTaskStatus: "completed" },
+  }), "invalid_request");
+  assert.equal(parseCodexSessionIngestV1({
+    ...complete,
+    workflow: {
+      ...workflow,
+      requestedTaskStatus: "completed",
+      taskCompletionAuthorized: true,
+    },
+  }).workflow?.requestedTaskStatus, "completed");
+});
+
 test("rejects oversized serialized payloads and obvious credentials without echoing them", () => {
   const credential = `github_pat_${"A".repeat(30)}`;
   let caught: unknown;

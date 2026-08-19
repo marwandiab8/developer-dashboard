@@ -1,5 +1,6 @@
 import { DashboardData } from "../models";
 import { DashboardAction } from "./types";
+import { calculateTaskActiveDuration, MAX_UNCLOSED_SESSION_MS, normalizeTaskStatus } from "../workflow";
 
 const nowIso = () => new Date().toISOString();
 
@@ -12,6 +13,25 @@ const touchProject = (data: DashboardData, projectId: string): DashboardData => 
         ? { ...project, lastWorkedAt: now, updatedAt: now }
         : project,
     ),
+  };
+};
+
+const boundedElapsed = (startedAt: string | null, endedAt: string) => {
+  if (!startedAt) return 0;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.min(end - start, MAX_UNCLOSED_SESSION_MS);
+};
+
+const refreshTaskDuration = (data: DashboardData, taskId: string | null): DashboardData => {
+  if (!taskId) return data;
+  const total = calculateTaskActiveDuration(data.developmentSessions, taskId);
+  return {
+    ...data,
+    tasks: data.tasks.map((task) => task.id === taskId
+      ? { ...task, totalActiveDurationMs: total }
+      : task),
   };
 };
 
@@ -73,17 +93,25 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "idea_to_task": {
+      const sourceIdea = state.ideas.find((idea) => idea.id === action.payload.ideaId);
+      if (!sourceIdea || sourceIdea.linkedTaskId) {
+        return state;
+      }
+      const convertedAt = action.payload.convertedAt ?? nowIso();
       const updatedIdeas = state.ideas.map((idea) =>
         idea.id === action.payload.ideaId
           ? ({
               ...idea,
               status: "converted" as const,
               linkedTaskId: action.payload.taskId,
-              updatedAt: nowIso(),
+              convertedAt,
+              updatedAt: convertedAt,
             } as typeof idea)
           : idea,
       ) as typeof state.ideas;
-      const updatedTasks = [action.payload.task, ...state.tasks] as typeof state.tasks;
+      const updatedTasks = state.tasks.some((task) => task.id === action.payload.task.id)
+        ? state.tasks
+        : [action.payload.task, ...state.tasks] as typeof state.tasks;
       return touchProject(
         {
           ...state,
@@ -95,6 +123,7 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "task_add": {
+      if (state.tasks.some((task) => task.id === action.payload.id)) return state;
       return touchProject(
         {
           ...state,
@@ -115,13 +144,17 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "task_start": {
+      const at = nowIso();
       const updated = state.tasks.map((task) =>
         task.id === action.payload.id
           ? ({
               ...task,
               status: "in_progress" as const,
-              startedAt: task.startedAt ?? nowIso(),
-              updatedAt: nowIso(),
+              startedAt: task.startedAt ?? at,
+              lastWorkedAt: at,
+              completedAt: null,
+              blockedReason: "",
+              updatedAt: at,
             } as typeof task)
           : task,
       ) as typeof state.tasks;
@@ -130,13 +163,16 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "task_block": {
+      const at = nowIso();
       const updated = state.tasks.map((task) =>
         task.id === action.payload.id
           ? ({
               ...task,
               status: "blocked" as const,
               blockedReason: action.payload.reason,
-              updatedAt: nowIso(),
+              lastWorkedAt: at,
+              completedAt: null,
+              updatedAt: at,
             } as typeof task)
           : task,
       ) as typeof state.tasks;
@@ -145,18 +181,49 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "task_complete": {
+      const at = nowIso();
       const updated = state.tasks.map((task) =>
         task.id === action.payload.id
           ? ({
               ...task,
               status: "completed" as const,
-              completedAt: nowIso(),
-              updatedAt: nowIso(),
+              completedAt: at,
+              lastWorkedAt: at,
+              blockedReason: "",
+              updatedAt: at,
             } as typeof task)
           : task,
       ) as typeof state.tasks;
       const target = updated.find((task) => task.id === action.payload.id);
       return target ? touchProject({ ...state, tasks: updated }, target.projectId) : { ...state, tasks: updated };
+    }
+
+    case "task_set_status": {
+      const target = state.tasks.find((task) => task.id === action.payload.id);
+      if (!target) return state;
+      const previousStatus = normalizeTaskStatus(target.status);
+      const nextStatus = normalizeTaskStatus(action.payload.status);
+      const updated = state.tasks.map((task) => {
+        if (task.id !== action.payload.id) return task;
+        return {
+          ...task,
+          status: nextStatus,
+          blockedReason: nextStatus === "blocked"
+            ? action.payload.blocker ?? task.blockedReason
+            : "",
+          readyAt: nextStatus === "ready" ? task.readyAt ?? action.payload.at : task.readyAt,
+          startedAt: nextStatus === "in_progress" ? task.startedAt ?? action.payload.at : task.startedAt,
+          completedAt: nextStatus === "completed" ? action.payload.at : null,
+          lastWorkedAt: ["in_progress", "blocked", "completed"].includes(nextStatus)
+            ? action.payload.at
+            : task.lastWorkedAt,
+          updatedAt: action.payload.at,
+          ...(previousStatus === "completed" && nextStatus !== "completed"
+            ? { completedAt: null }
+            : {}),
+        };
+      }) as typeof state.tasks;
+      return touchProject({ ...state, tasks: updated }, target.projectId);
     }
 
     case "brain_dump_add": {
@@ -226,11 +293,22 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "prompt_upsert": {
+      const next = {
+        ...state,
+        codexPrompts: [...state.codexPrompts.filter((prompt) => prompt.id !== action.payload.id), action.payload],
+        tasks: action.payload.relatedTaskId
+          ? state.tasks.map((task) => task.id === action.payload.relatedTaskId
+            ? {
+                ...task,
+                promptRecordIds: task.promptRecordIds.includes(action.payload.id)
+                  ? task.promptRecordIds
+                  : [...task.promptRecordIds, action.payload.id],
+              }
+            : task)
+          : state.tasks,
+      };
       return touchProject(
-        {
-          ...state,
-          codexPrompts: [...state.codexPrompts.filter((prompt) => prompt.id !== action.payload.id), action.payload],
-        },
+        next,
         action.payload.projectId,
       );
     }
@@ -240,7 +318,7 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
         prompt.id === action.payload.id
           ? ({
               ...prompt,
-              status: "used" as const,
+              status: "completed" as const,
               resultSummary: action.payload.usedSummary,
               lastUsedAt: nowIso(),
               updatedAt: nowIso(),
@@ -292,11 +370,38 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
     }
 
     case "session_start": {
-      return touchProject(
-        {
+      if (state.developmentSessions.some((session) => session.id === action.payload.id)) return state;
+      const next = {
           ...state,
           developmentSessions: [action.payload, ...state.developmentSessions],
-        },
+          tasks: action.payload.taskId
+            ? state.tasks.map((task) => task.id === action.payload.taskId
+              ? {
+                  ...task,
+                  status: "in_progress" as const,
+                  startedAt: task.startedAt ?? action.payload.startedAt,
+                  lastWorkedAt: action.payload.startedAt,
+                  workSessionIds: task.workSessionIds.includes(action.payload.id)
+                    ? task.workSessionIds
+                    : [...task.workSessionIds, action.payload.id],
+                  updatedAt: action.payload.startedAt,
+                }
+              : task)
+            : state.tasks,
+          codexPrompts: action.payload.promptRecordId
+            ? state.codexPrompts.map((prompt) => prompt.id === action.payload.promptRecordId
+              ? {
+                  ...prompt,
+                  relatedSessionId: action.payload.id,
+                  status: "started" as const,
+                  lastUsedAt: action.payload.startedAt,
+                  updatedAt: action.payload.startedAt,
+                }
+              : prompt)
+            : state.codexPrompts,
+        };
+      return touchProject(
+        next,
         action.payload.projectId,
       );
     }
@@ -315,6 +420,79 @@ export function dashboardReducer(state: DashboardData, action: DashboardAction):
       ) as typeof state.developmentSessions;
       const target = updated.find((session) => session.id === action.payload.id);
       return target ? touchProject({ ...state, developmentSessions: updated }, target.projectId) : { ...state, developmentSessions: updated };
+    }
+
+    case "session_pause": {
+      const target = state.developmentSessions.find((session) => session.id === action.payload.id);
+      if (!target || target.status !== "active") return state;
+      const activeDurationMs = target.activeDurationMs
+        + boundedElapsed(target.activeStartedAt, action.payload.at);
+      const sessions = state.developmentSessions.map((session) => session.id === target.id
+        ? {
+            ...session,
+            status: "paused" as const,
+            activeStartedAt: null,
+            activeDurationMs,
+            nextStep: action.payload.nextStep ?? session.nextStep,
+            nextStartingPoint: action.payload.nextStep ?? session.nextStartingPoint,
+          }
+        : session);
+      const withDuration = refreshTaskDuration({ ...state, developmentSessions: sessions }, target.taskId);
+      return touchProject(withDuration, target.projectId);
+    }
+
+    case "session_resume": {
+      const target = state.developmentSessions.find((session) => session.id === action.payload.id);
+      if (!target || target.status !== "paused") return state;
+      const sessions = state.developmentSessions.map((session) => session.id === target.id
+        ? {
+            ...session,
+            status: "active" as const,
+            activeStartedAt: action.payload.at,
+            resumeFromNote: action.payload.resumeFromNote ?? session.resumeFromNote,
+          }
+        : session);
+      const tasks = target.taskId
+        ? state.tasks.map((task) => task.id === target.taskId
+          ? {
+              ...task,
+              status: "in_progress" as const,
+              startedAt: task.startedAt ?? action.payload.at,
+              lastWorkedAt: action.payload.at,
+              updatedAt: action.payload.at,
+            }
+          : task)
+        : state.tasks;
+      return touchProject({ ...state, developmentSessions: sessions, tasks }, target.projectId);
+    }
+
+    case "session_finish": {
+      const target = state.developmentSessions.find((session) => session.id === action.payload.id);
+      if (!target || target.status === "completed" || target.status === "abandoned") return state;
+      const activeDurationMs = target.activeDurationMs
+        + (target.status === "active" ? boundedElapsed(target.activeStartedAt, action.payload.at) : 0);
+      const sessions = state.developmentSessions.map((session) => session.id === target.id
+        ? {
+            ...session,
+            ...action.payload.updates,
+            status: action.payload.status,
+            endedAt: action.payload.at,
+            activeStartedAt: null,
+            activeDurationMs,
+          }
+        : session) as typeof state.developmentSessions;
+      const withDuration = refreshTaskDuration({ ...state, developmentSessions: sessions }, target.taskId);
+      return touchProject(withDuration, target.projectId);
+    }
+
+    case "session_correct": {
+      const target = state.developmentSessions.find((session) => session.id === action.payload.id);
+      if (!target) return state;
+      const sessions = state.developmentSessions.map((session) => session.id === target.id
+        ? { ...session, activeDurationMs: action.payload.activeDurationMs }
+        : session);
+      const withDuration = refreshTaskDuration({ ...state, developmentSessions: sessions }, target.taskId);
+      return touchProject(withDuration, target.projectId);
     }
 
     case "session_note_append": {

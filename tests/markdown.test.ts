@@ -31,6 +31,8 @@ describe("markdown generators", () => {
     data.developmentSessions.unshift({
       id: "dddddddd-1111-4111-8111-111111111112",
       projectId,
+      taskId: null,
+      promptRecordId: null,
       startedAt: "2026-08-11T12:00:00.000Z",
       endedAt: "2026-08-11T13:00:00.000Z",
       objective: "Implement automatic Codex ingestion",
@@ -52,6 +54,14 @@ describe("markdown generators", () => {
       nextStartingPoint: "Add the reusable instruction to another project",
       status: "completed",
       notes: "The complete semantic handoff is stored on this session.",
+      activeStartedAt: null,
+      activeDurationMs: 60 * 60 * 1000,
+      resumeFromNote: "",
+      blocker: "Waiting for per-repository setup",
+      nextStep: "Add the reusable instruction to another project",
+      testResults: [],
+      buildResults: [],
+      deploymentStatus: "Not deployed",
     });
 
     const resume = generateProjectResume(data, projectId);

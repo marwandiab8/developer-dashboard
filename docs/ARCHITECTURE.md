@@ -1,5 +1,13 @@
 # Developer Dashboard architecture
 
+## Shared workflow extension (schema version 2)
+
+The shared Marwan/ChatGPT/Codex workflow remains repository-first. Domain models, Zod validation, reducer actions, adapters, resume/context generators, and UI all use the existing `DashboardData` aggregate. The task-context and timeline projections are pure functions in `src/lib`; they do not create a second data store.
+
+The `dashboardMcp` Firebase HTTPS Function is a separate OAuth-protected MCP resource boundary. It exposes explicit tools through the MCP SDK and calls an owner-scoped persistence service. That service derives the configured Firestore UID, checks exact relationships, and performs idempotent audited transactions. It never exposes Firebase Admin, Firestore query primitives, GitHub credentials, ingestion credentials, or repository execution.
+
+Codex completion remains on the existing `ingestCodexSession` boundary. Its optional workflow identity links a completion to existing task/prompt/session records while retaining backward-compatible V1 reports. GitHub synchronization remains an independent facts-only source and cannot mutate semantic workflow history.
+
 ## Purpose
 
 Developer Dashboard is a personal external development brain. GitHub repositories are imported as project sources, not as a replacement for project ideas, tasks, sessions, decisions, prompts, notes, scratchpads, blockers, next actions, or generated context.

@@ -1,6 +1,7 @@
 export { requireCodexIngestionCredential, requireCodexOwnerUid } from "./auth";
 export {
   assertPayloadExcludesConfiguredValues,
+  assertPayloadExcludesSensitiveContent,
   codexProjectVerificationV1Schema,
   codexSessionIngestV1Schema,
   isCodexProjectVerificationRequest,

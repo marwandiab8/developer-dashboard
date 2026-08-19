@@ -45,6 +45,11 @@ import {
 } from "../validation";
 import { SCHEMA_VERSION, STORAGE_KEY } from "../constants";
 import { nowIso } from "../utils/time";
+import {
+  normalizeIdeaStatus,
+  normalizePromptStatus,
+  normalizeTaskStatus,
+} from "../workflow";
 import type {
   DashboardAction,
   DashboardRepository,
@@ -111,6 +116,24 @@ const asNullableString = (value: unknown): string | null => {
 const toStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
+};
+
+const asNonNegativeInteger = (value: unknown): number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+
+const mappedIdeaStatus = (value: unknown): Idea["status"] => {
+  const status = asString(value) as Idea["status"];
+  return normalizeIdeaStatus(status || "inbox");
+};
+
+const mappedTaskStatus = (value: unknown): Task["status"] => {
+  const status = asString(value) as Task["status"];
+  return normalizeTaskStatus(status || "open");
+};
+
+const mappedPromptStatus = (value: unknown): CodexPrompt["status"] => {
+  const status = asString(value) as CodexPrompt["status"];
+  return normalizePromptStatus(status || "prepared");
 };
 
 const toIsoString = (value: unknown): string => {
@@ -197,7 +220,7 @@ export const mapProject = (id: string, snapshot: SnapshotRecord): Project | null
       title: asAuthoredString(snapshot.title),
       slug: asString(snapshot.slug),
       purpose: asAuthoredString(snapshot.purpose) || legacyGithubPurposeFallback(snapshot),
-      status: asString(snapshot.status),
+      status: mappedIdeaStatus(snapshot.status),
       ...(asString(snapshot.manualStatus) ? { manualStatus: asString(snapshot.manualStatus) } : {}),
       currentBranch: asString(snapshot.currentBranch),
       currentObjective: asAuthoredString(snapshot.currentObjective),
@@ -232,6 +255,8 @@ export const mapIdea = (id: string, snapshot: SnapshotRecord): Idea | null =>
         : {}),
       tags: toStringArray(snapshot.tags),
       linkedTaskId: asNullableString(snapshot.linkedTaskId),
+      convertedAt: snapshot.convertedAt ? toIsoString(snapshot.convertedAt) : null,
+      ...(asString(snapshot.legacyStatus) ? { legacyStatus: asString(snapshot.legacyStatus) } : {}),
       createdAt: toIsoString(snapshot.createdAt),
       updatedAt: toIsoString(snapshot.updatedAt),
     },
@@ -246,7 +271,7 @@ const mapTask = (id: string, snapshot: SnapshotRecord): Task | null =>
       title: asAuthoredString(snapshot.title),
       details: asAuthoredString(snapshot.details),
       type: asString(snapshot.type),
-      status: asString(snapshot.status),
+      status: mappedTaskStatus(snapshot.status),
       priority: asString(snapshot.priority),
       blockedReason: asAuthoredString(snapshot.blockedReason),
       sourceIdeaId: asNullableString(snapshot.sourceIdeaId),
@@ -256,6 +281,16 @@ const mapTask = (id: string, snapshot: SnapshotRecord): Task | null =>
       updatedAt: toIsoString(snapshot.updatedAt),
       startedAt: snapshot.startedAt ? toIsoString(snapshot.startedAt) : null,
       completedAt: snapshot.completedAt ? toIsoString(snapshot.completedAt) : null,
+      readyAt: snapshot.readyAt ? toIsoString(snapshot.readyAt) : null,
+      lastWorkedAt: snapshot.lastWorkedAt ? toIsoString(snapshot.lastWorkedAt) : null,
+      totalActiveDurationMs: asNonNegativeInteger(snapshot.totalActiveDurationMs),
+      promptRecordIds: toStringArray(snapshot.promptRecordIds),
+      workSessionIds: toStringArray(snapshot.workSessionIds),
+      recommendedNextStep: asAuthoredString(snapshot.recommendedNextStep),
+      githubBranch: asAuthoredString(snapshot.githubBranch),
+      githubCommit: asAuthoredString(snapshot.githubCommit),
+      githubPullRequest: asAuthoredString(snapshot.githubPullRequest),
+      ...(asString(snapshot.legacyStatus) ? { legacyStatus: asString(snapshot.legacyStatus) } : {}),
     },
   );
 
@@ -312,17 +347,39 @@ export const mapCodexPrompt = (id: string, snapshot: SnapshotRecord): CodexPromp
       purpose: asAuthoredString(snapshot.purpose),
       prompt: asAuthoredString(snapshot.prompt),
       resultSummary: asAuthoredString(snapshot.resultSummary),
-      status: asString(snapshot.status),
+      status: mappedPromptStatus(snapshot.status),
       relatedTaskId: asNullableString(snapshot.relatedTaskId),
       ...(snapshot.relatedSessionId === null
         ? { relatedSessionId: null }
         : asString(snapshot.relatedSessionId)
           ? { relatedSessionId: asString(snapshot.relatedSessionId) }
           : {}),
-      ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      source: ["chatgpt", "codex", "manual"].includes(asString(snapshot.source))
+        ? asString(snapshot.source)
+        : "manual",
       ...(asString(snapshot.externalSessionId)
         ? { externalSessionId: asString(snapshot.externalSessionId) }
         : {}),
+      sequenceNumber: asNonNegativeInteger(snapshot.sequenceNumber) || 1,
+      promptSummary: asAuthoredString(snapshot.promptSummary) || asAuthoredString(snapshot.purpose),
+      requestedChange: asAuthoredString(snapshot.requestedChange) || asAuthoredString(snapshot.purpose),
+      createdBy: ["marwan", "chatgpt", "codex"].includes(asString(snapshot.createdBy))
+        ? asString(snapshot.createdBy)
+        : asString(snapshot.source) === "codex" ? "codex" : "marwan",
+      completedWork: toStringArray(snapshot.completedWork),
+      unfinishedWork: toStringArray(snapshot.unfinishedWork),
+      problemsDiscovered: toStringArray(snapshot.problemsDiscovered),
+      decisionsMade: toStringArray(snapshot.decisionsMade),
+      filesModified: toStringArray(snapshot.filesModified),
+      commits: toStringArray(snapshot.commits),
+      branch: asAuthoredString(snapshot.branch),
+      blocker: asAuthoredString(snapshot.blocker),
+      recommendedNextStep: asAuthoredString(snapshot.recommendedNextStep),
+      activeDurationMs: asNonNegativeInteger(snapshot.activeDurationMs),
+      testResults: toStringArray(snapshot.testResults),
+      buildResults: toStringArray(snapshot.buildResults),
+      deploymentStatus: asAuthoredString(snapshot.deploymentStatus),
+      ...(asString(snapshot.legacyStatus) ? { legacyStatus: asString(snapshot.legacyStatus) } : {}),
       createdAt: toIsoString(snapshot.createdAt),
       updatedAt: toIsoString(snapshot.updatedAt),
       lastUsedAt: snapshot.lastUsedAt ? toIsoString(snapshot.lastUsedAt) : null,
@@ -366,11 +423,17 @@ export const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSes
     {
       id,
       projectId: asString(snapshot.projectId),
+      taskId: asNullableString(snapshot.taskId)
+        ?? toStringArray(snapshot.tasksWorkedOn)[0]
+        ?? null,
+      promptRecordId: asNullableString(snapshot.promptRecordId),
       startedAt: toIsoString(snapshot.startedAt),
       endedAt: snapshot.endedAt ? toIsoString(snapshot.endedAt) : null,
       objective: asAuthoredString(snapshot.objective),
       summary: asAuthoredString(snapshot.summary),
-      ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      source: ["chatgpt", "codex", "manual"].includes(asString(snapshot.source))
+        ? asString(snapshot.source)
+        : "manual",
       ...(asString(snapshot.externalSessionId)
         ? { externalSessionId: asString(snapshot.externalSessionId) }
         : {}),
@@ -395,6 +458,18 @@ export const mapSession = (id: string, snapshot: SnapshotRecord): DevelopmentSes
       nextStartingPoint: asAuthoredString(snapshot.nextStartingPoint),
       status: asString(snapshot.status) as DevelopmentSession["status"],
       notes: asAuthoredString(snapshot.notes),
+      activeStartedAt: snapshot.activeStartedAt
+        ? toIsoString(snapshot.activeStartedAt)
+        : asString(snapshot.status) === "active"
+          ? toIsoString(snapshot.startedAt)
+          : null,
+      activeDurationMs: asNonNegativeInteger(snapshot.activeDurationMs),
+      resumeFromNote: asAuthoredString(snapshot.resumeFromNote),
+      blocker: asAuthoredString(snapshot.blocker) || asAuthoredString(snapshot.currentBlocker),
+      nextStep: asAuthoredString(snapshot.nextStep) || asAuthoredString(snapshot.nextStartingPoint),
+      testResults: toStringArray(snapshot.testResults),
+      buildResults: toStringArray(snapshot.buildResults),
+      deploymentStatus: asAuthoredString(snapshot.deploymentStatus),
     },
   );
 
@@ -410,6 +485,12 @@ export const mapActivity = (id: string, snapshot: SnapshotRecord): ActivityEvent
       entityId: asString(snapshot.entityId),
       metadata: asAuthoredString(snapshot.metadata),
       ...(asString(snapshot.source) === "codex" ? { source: "codex" as const } : {}),
+      ...(["marwan", "chatgpt", "codex"].includes(asString(snapshot.actor))
+        ? { actor: asString(snapshot.actor) }
+        : {}),
+      ...(snapshot.taskId === null ? { taskId: null } : asString(snapshot.taskId) ? { taskId: asString(snapshot.taskId) } : {}),
+      ...(snapshot.promptRecordId === null ? { promptRecordId: null } : asString(snapshot.promptRecordId) ? { promptRecordId: asString(snapshot.promptRecordId) } : {}),
+      ...(snapshot.workSessionId === null ? { workSessionId: null } : asString(snapshot.workSessionId) ? { workSessionId: asString(snapshot.workSessionId) } : {}),
       ...(asString(snapshot.externalSessionId)
         ? { externalSessionId: asString(snapshot.externalSessionId) }
         : {}),
@@ -1183,6 +1264,7 @@ export const createFirestoreRepository = async (uid: string): Promise<DashboardR
         batch.update(docRef(uid, COLLECTIONS.ideas, action.payload.ideaId), {
           status: "converted",
           linkedTaskId: action.payload.task.id,
+          convertedAt: action.payload.convertedAt ?? makeWriteDate(),
           updatedAt: makeWriteDate(),
         });
         break;
@@ -1227,6 +1309,25 @@ export const createFirestoreRepository = async (uid: string): Promise<DashboardR
           status: "completed",
           completedAt: nowIso(),
           updatedAt: makeWriteDate(),
+        });
+        break;
+
+      case "task_set_status":
+        batch.update(docRef(uid, COLLECTIONS.tasks, action.payload.id), {
+          status: normalizeTaskStatus(action.payload.status),
+          blockedReason: normalizeTaskStatus(action.payload.status) === "blocked"
+            ? action.payload.blocker ?? ""
+            : "",
+          ...(normalizeTaskStatus(action.payload.status) === "ready"
+            ? { readyAt: action.payload.at }
+            : {}),
+          ...(normalizeTaskStatus(action.payload.status) === "in_progress"
+            ? { startedAt: action.payload.at, lastWorkedAt: action.payload.at }
+            : {}),
+          completedAt: normalizeTaskStatus(action.payload.status) === "completed"
+            ? action.payload.at
+            : null,
+          updatedAt: action.payload.at,
         });
         break;
 
@@ -1298,7 +1399,7 @@ export const createFirestoreRepository = async (uid: string): Promise<DashboardR
 
       case "prompt_mark_used":
         batch.update(docRef(uid, COLLECTIONS.codexPrompts, action.payload.id), {
-          status: "used",
+          status: "completed",
           resultSummary: action.payload.usedSummary,
           lastUsedAt: makeWriteDate(),
           updatedAt: makeWriteDate(),
@@ -1361,6 +1462,43 @@ export const createFirestoreRepository = async (uid: string): Promise<DashboardR
           status: "completed",
           endedAt: action.payload.updates.endedAt ?? nowIso(),
           updatedAt: makeWriteDate(),
+        });
+        break;
+
+      case "session_pause":
+        batch.update(docRef(uid, COLLECTIONS.sessions, action.payload.id), {
+          status: "paused",
+          activeStartedAt: null,
+          ...(action.payload.nextStep ? { nextStep: action.payload.nextStep } : {}),
+          updatedAt: action.payload.at,
+        });
+        break;
+
+      case "session_resume":
+        batch.update(docRef(uid, COLLECTIONS.sessions, action.payload.id), {
+          status: "active",
+          activeStartedAt: action.payload.at,
+          ...(action.payload.resumeFromNote
+            ? { resumeFromNote: action.payload.resumeFromNote }
+            : {}),
+          updatedAt: action.payload.at,
+        });
+        break;
+
+      case "session_finish":
+        batch.update(docRef(uid, COLLECTIONS.sessions, action.payload.id), {
+          ...mapToWriteModel(action.payload.updates as Record<string, unknown>),
+          status: action.payload.status,
+          endedAt: action.payload.at,
+          activeStartedAt: null,
+          updatedAt: action.payload.at,
+        });
+        break;
+
+      case "session_correct":
+        batch.update(docRef(uid, COLLECTIONS.sessions, action.payload.id), {
+          activeDurationMs: action.payload.activeDurationMs,
+          updatedAt: action.payload.at,
         });
         break;
 

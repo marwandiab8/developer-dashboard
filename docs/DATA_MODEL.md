@@ -14,6 +14,15 @@
 - `DevelopmentSession`: active/completed work sessions, including optional Codex provenance and semantic completion, unfinished-work, branch, blocker, file, commit, problem, and decision context
 - `ActivityEvent`: meaningful change log with optional Codex source/session provenance
 
+Schema version 2 extends these existing entities rather than adding a parallel workflow. Ideas retain their original record after conversion and link bidirectionally to tasks. Tasks contain stable prompt/session ID lists and derived active-time/continuity fields. Prompt records are append-only per task sequence. Work sessions contain exact task/prompt links and active intervals. See `docs/SHARED_WORKFLOW.md` for lifecycle meanings and `docs/MIGRATION_V2.md` for compatibility mappings.
+
+Backend-only MCP records live under the same owner root:
+
+- `users/{uid}/mcpAuditEvents/{auditId}` records each successful state-changing MCP mutation without request bodies or secrets.
+- `users/{uid}/mcpIdempotencyReceipts/{receiptId}` binds one tool/idempotency key to its payload fingerprint and structured result.
+
+Browser access to both collections is denied. MCP callers never supply the UID; the Function derives the configured owner UID after OAuth verification.
+
 ## Storage
 
 - `SchemaVersion`: `SCHEMA_VERSION`

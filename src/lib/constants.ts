@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const STORAGE_KEY = "developer-dashboard:data:v1";
 export const QUICK_CAPTURE_PREFERENCES_KEY = "developer-dashboard:quick-capture:v1";
 export const QUICK_CAPTURE_RECENT_LIMIT = 5;
@@ -9,18 +9,16 @@ export const GITHUB_ACTIVITY_DAYS = {
 } as const;
 
 export const PRIMARY_NAV = [
-  { href: "/", label: "Dashboard" },
+  { href: "/", label: "Home" },
   { href: "/projects", label: "Projects" },
-  { href: "/ideas", label: "Ideas Inbox" },
-  { href: "/tasks", label: "Tasks" },
-  { href: "/sessions", label: "Sessions" },
-  { href: "/search", label: "Search" },
+  { href: "/ideas", label: "Ideas" },
 ] as const;
 
 export const PROJECT_SECTIONS = [
   "workbench",
   "ideas",
   "tasks",
+  "timeline",
   "brain-dump",
   "scratchpad",
   "sessions",

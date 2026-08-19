@@ -29,6 +29,7 @@ type ContinuityFieldState = {
 const projectsPath = (uid: string) => `users/${uid}/projects`;
 const sessionPath = (uid: string, id: string) => `users/${uid}/sessions/${id}`;
 const promptPath = (uid: string, id: string) => `users/${uid}/codexPrompts/${id}`;
+const taskPath = (uid: string, id: string) => `users/${uid}/tasks/${id}`;
 const activityPath = (uid: string, id: string) => `users/${uid}/activity/${id}`;
 const ideaPath = (uid: string, id: string) => `users/${uid}/ideas/${id}`;
 const receiptPath = (uid: string, id: string) => `users/${uid}/codexIngestionReceipts/${id}`;
@@ -38,6 +39,12 @@ const continuityPath = (uid: string, projectId: string) => `users/${uid}/codexCo
 
 const isRecord = (value: unknown): value is StoredRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const stringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+const nonNegativeInteger = (value: unknown): number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 
 const nestedValue = (record: StoredRecord, path: string): unknown => {
   let value: unknown = record;
@@ -238,14 +245,15 @@ const buildResult = (
   identity: string,
   ideaCount: number,
   idempotent: boolean,
+  workflow?: CodexSessionIngestV1["workflow"],
 ): CodexIngestionResult => ({
   ok: true,
   idempotent,
   status: idempotent ? "duplicate" : "created",
   projectId,
   externalSessionId,
-  sessionId: entityId(identity, "session"),
-  promptId: entityId(identity, "prompt"),
+  sessionId: workflow?.workSessionId ?? entityId(identity, "session"),
+  promptId: workflow?.promptRecordId ?? entityId(identity, "prompt"),
   activityId: entityId(identity, "activity"),
   ideaIds: Array.from({ length: ideaCount }, (_, index) => entityId(identity, `idea:${index}`)),
 });
@@ -307,7 +315,14 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
           project.id,
           input.payload.session.externalSessionId,
         );
-        return buildResult(project.id, input.payload.session.externalSessionId, identity, ideaCount, true);
+        return buildResult(
+          project.id,
+          input.payload.session.externalSessionId,
+          identity,
+          ideaCount,
+          true,
+          input.payload.workflow,
+        );
       }
 
       const currentMinute = minuteKey(input.receivedAt);
@@ -317,6 +332,54 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
         transaction.get(rateReference),
         transaction.get(continuityReference),
       ]);
+      const workflow = input.payload.workflow;
+      let workflowRecords: {
+        taskReference: ReturnType<Firestore["doc"]>;
+        promptReference: ReturnType<Firestore["doc"]>;
+        sessionReference: ReturnType<Firestore["doc"]>;
+        task: StoredRecord;
+        prompt: StoredRecord;
+        session: StoredRecord;
+      } | null = null;
+      if (workflow) {
+        const taskReference = this.db.doc(taskPath(input.uid, workflow.taskId));
+        const promptReference = this.db.doc(promptPath(input.uid, workflow.promptRecordId));
+        const sessionReference = this.db.doc(sessionPath(input.uid, workflow.workSessionId));
+        const [taskSnapshot, promptSnapshot, sessionSnapshot] = await Promise.all([
+          transaction.get(taskReference),
+          transaction.get(promptReference),
+          transaction.get(sessionReference),
+        ]);
+        if (!taskSnapshot.exists || !promptSnapshot.exists || !sessionSnapshot.exists) {
+          throw new CodexIngestionError("workflow_not_associated", 404);
+        }
+        const task = (taskSnapshot.data() ?? {}) as StoredRecord;
+        const prompt = (promptSnapshot.data() ?? {}) as StoredRecord;
+        const workSession = (sessionSnapshot.data() ?? {}) as StoredRecord;
+        const sessionTaskIds = stringArray(workSession.tasksWorkedOn);
+        const sessionPromptIds = stringArray(workSession.promptsUsed);
+        if (
+          task.projectId !== project.id
+          || prompt.projectId !== project.id
+          || prompt.relatedTaskId !== workflow.taskId
+          || workSession.projectId !== project.id
+          || (workSession.taskId !== workflow.taskId && !sessionTaskIds.includes(workflow.taskId))
+          || (
+            workSession.promptRecordId !== workflow.promptRecordId
+            && !sessionPromptIds.includes(workflow.promptRecordId)
+          )
+        ) {
+          throw new CodexIngestionError("workflow_mismatch", 409);
+        }
+        workflowRecords = {
+          taskReference,
+          promptReference,
+          sessionReference,
+          task,
+          prompt,
+          session: workSession,
+        };
+      }
       const rateData = rateSnapshot.data();
       const previousCount = isRecord(rateData) && typeof rateData.count === "number"
         ? rateData.count
@@ -325,7 +388,14 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
         throw new CodexIngestionError("rate_limited", 429);
       }
 
-      const result = buildResult(project.id, input.payload.session.externalSessionId, identity, ideaCount, false);
+      const result = buildResult(
+        project.id,
+        input.payload.session.externalSessionId,
+        identity,
+        ideaCount,
+        false,
+        input.payload.workflow,
+      );
       const session = input.payload.session;
       const startedAt = session.startedAt ?? session.endedAt;
       const title = titleFrom(input.payload);
@@ -357,60 +427,208 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
       if (advancesTimestamp(project.data.lastWorkedAt, session.endedAt)) projectUpdates.lastWorkedAt = session.endedAt;
       if (advancesTimestamp(project.data.updatedAt, session.endedAt)) projectUpdates.updatedAt = session.endedAt;
 
-      transaction.create(this.db.doc(sessionPath(input.uid, result.sessionId)), {
-        projectId: project.id,
-        startedAt,
-        endedAt: session.endedAt,
-        objective: session.objective ?? session.summary,
-        summary: session.summary,
-        source: "codex",
-        externalSessionId: session.externalSessionId,
-        ...(session.branch ? { branch: session.branch } : {}),
-        completedItems: session.completed,
-        unfinishedItems: session.unfinished,
-        ...(session.currentBlocker !== undefined ? { currentBlocker: session.currentBlocker ?? "" } : {}),
-        tasksWorkedOn: [],
-        tasksCompleted: [],
-        ideasAdded: result.ideaIds,
-        problemsDiscovered: session.problemsDiscovered,
-        decisionsMade: session.decisionsMade,
-        promptsUsed: [result.promptId],
-        filesModified: session.filesModified,
-        commits: session.commits,
-        nextStartingPoint: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
-        status: "completed",
-        notes: session.summary,
-      });
-      transaction.create(this.db.doc(promptPath(input.uid, result.promptId)), {
-        projectId: project.id,
-        title,
-        purpose: session.objective ?? session.summary,
-        prompt: session.prompt,
-        resultSummary: session.summary,
-        status: "used",
-        relatedTaskId: null,
-        relatedSessionId: result.sessionId,
-        source: "codex",
-        externalSessionId: session.externalSessionId,
-        createdAt: startedAt,
-        updatedAt: session.endedAt,
-        lastUsedAt: session.endedAt,
-      });
+      if (workflow && workflowRecords) {
+        const reportedDuration = session.activeDurationMs
+          ?? nonNegativeInteger(workflowRecords.session.activeDurationMs);
+        const previousSessionDuration = nonNegativeInteger(workflowRecords.session.activeDurationMs);
+        const previousTaskDuration = nonNegativeInteger(workflowRecords.task.totalActiveDurationMs);
+        const nextTaskDuration = Math.max(
+          0,
+          previousTaskDuration - previousSessionDuration + reportedDuration,
+        );
+        const taskPromptIds = [...new Set([
+          ...stringArray(workflowRecords.task.promptRecordIds),
+          workflow.promptRecordId,
+        ])];
+        const taskSessionIds = [...new Set([
+          ...stringArray(workflowRecords.task.workSessionIds),
+          workflow.workSessionId,
+        ])];
+        const taskUpdates: StoredRecord = {
+          promptRecordIds: taskPromptIds,
+          workSessionIds: taskSessionIds,
+          totalActiveDurationMs: nextTaskDuration,
+          lastWorkedAt: session.endedAt,
+          updatedAt: session.endedAt,
+          ...(session.nextRecommendedTask !== undefined
+            ? { recommendedNextStep: session.nextRecommendedTask }
+            : {}),
+          ...(session.branch ? { githubBranch: session.branch } : {}),
+          ...(session.commits[0] ? { githubCommit: session.commits[0] } : {}),
+        };
+        if (workflow.requestedTaskStatus) {
+          taskUpdates.status = workflow.requestedTaskStatus;
+          taskUpdates.blockedReason = workflow.requestedTaskStatus === "blocked"
+            ? session.currentBlocker ?? ""
+            : "";
+          if (workflow.requestedTaskStatus === "ready") {
+            taskUpdates.readyAt = typeof workflowRecords.task.readyAt === "string"
+              ? workflowRecords.task.readyAt
+              : session.endedAt;
+          }
+          if (workflow.requestedTaskStatus === "in_progress") {
+            taskUpdates.startedAt = typeof workflowRecords.task.startedAt === "string"
+              ? workflowRecords.task.startedAt
+              : startedAt;
+          }
+          taskUpdates.completedAt = workflow.requestedTaskStatus === "completed"
+            ? session.endedAt
+            : null;
+        }
+        transaction.update(workflowRecords.taskReference, taskUpdates);
+        transaction.update(workflowRecords.sessionReference, {
+          projectId: project.id,
+          taskId: workflow.taskId,
+          promptRecordId: workflow.promptRecordId,
+          startedAt,
+          endedAt: workflow.workSessionStatus === "completed" ? session.endedAt : null,
+          objective: session.objective ?? session.summary,
+          summary: session.summary,
+          source: "codex",
+          externalSessionId: session.externalSessionId,
+          ...(session.branch ? { branch: session.branch } : {}),
+          completedItems: session.completed,
+          unfinishedItems: session.unfinished,
+          currentBlocker: session.currentBlocker ?? "",
+          tasksWorkedOn: [...new Set([
+            ...stringArray(workflowRecords.session.tasksWorkedOn),
+            workflow.taskId,
+          ])],
+          tasksCompleted: stringArray(workflowRecords.session.tasksCompleted),
+          ideasAdded: [...new Set([
+            ...stringArray(workflowRecords.session.ideasAdded),
+            ...result.ideaIds,
+          ])],
+          problemsDiscovered: session.problemsDiscovered,
+          decisionsMade: session.decisionsMade,
+          promptsUsed: [...new Set([
+            ...stringArray(workflowRecords.session.promptsUsed),
+            workflow.promptRecordId,
+          ])],
+          filesModified: session.filesModified,
+          commits: session.commits,
+          nextStartingPoint: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          nextStep: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          blocker: session.currentBlocker ?? "",
+          status: workflow.workSessionStatus,
+          notes: session.summary,
+          activeStartedAt: null,
+          activeDurationMs: reportedDuration,
+          testResults: session.testResults ?? [],
+          buildResults: session.buildResults ?? [],
+          deploymentStatus: session.deploymentStatus ?? "",
+        });
+        transaction.update(workflowRecords.promptReference, {
+          resultSummary: session.summary,
+          status: workflow.promptStatus,
+          relatedTaskId: workflow.taskId,
+          relatedSessionId: workflow.workSessionId,
+          source: "codex",
+          externalSessionId: session.externalSessionId,
+          updatedAt: session.endedAt,
+          lastUsedAt: session.endedAt,
+          completedWork: session.completed,
+          unfinishedWork: session.unfinished,
+          problemsDiscovered: session.problemsDiscovered,
+          decisionsMade: session.decisionsMade,
+          filesModified: session.filesModified,
+          commits: session.commits,
+          branch: session.branch ?? "",
+          blocker: session.currentBlocker ?? "",
+          recommendedNextStep: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          activeDurationMs: reportedDuration,
+          testResults: session.testResults ?? [],
+          buildResults: session.buildResults ?? [],
+          deploymentStatus: session.deploymentStatus ?? "",
+        });
+      } else {
+        transaction.create(this.db.doc(sessionPath(input.uid, result.sessionId)), {
+          projectId: project.id,
+          taskId: null,
+          promptRecordId: result.promptId,
+          startedAt,
+          endedAt: session.endedAt,
+          objective: session.objective ?? session.summary,
+          summary: session.summary,
+          source: "codex",
+          externalSessionId: session.externalSessionId,
+          ...(session.branch ? { branch: session.branch } : {}),
+          completedItems: session.completed,
+          unfinishedItems: session.unfinished,
+          ...(session.currentBlocker !== undefined ? { currentBlocker: session.currentBlocker ?? "" } : {}),
+          tasksWorkedOn: [],
+          tasksCompleted: [],
+          ideasAdded: result.ideaIds,
+          problemsDiscovered: session.problemsDiscovered,
+          decisionsMade: session.decisionsMade,
+          promptsUsed: [result.promptId],
+          filesModified: session.filesModified,
+          commits: session.commits,
+          nextStartingPoint: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          status: "completed",
+          notes: session.summary,
+          activeStartedAt: null,
+          activeDurationMs: session.activeDurationMs ?? 0,
+          resumeFromNote: "",
+          blocker: session.currentBlocker ?? "",
+          nextStep: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          testResults: session.testResults ?? [],
+          buildResults: session.buildResults ?? [],
+          deploymentStatus: session.deploymentStatus ?? "",
+        });
+        transaction.create(this.db.doc(promptPath(input.uid, result.promptId)), {
+          projectId: project.id,
+          title,
+          purpose: session.objective ?? session.summary,
+          prompt: session.prompt,
+          resultSummary: session.summary,
+          status: "completed",
+          relatedTaskId: null,
+          relatedSessionId: result.sessionId,
+          source: "codex",
+          externalSessionId: session.externalSessionId,
+          sequenceNumber: 1,
+          promptSummary: session.objective ?? session.summary,
+          requestedChange: session.objective ?? session.summary,
+          createdBy: "codex",
+          completedWork: session.completed,
+          unfinishedWork: session.unfinished,
+          problemsDiscovered: session.problemsDiscovered,
+          decisionsMade: session.decisionsMade,
+          filesModified: session.filesModified,
+          commits: session.commits,
+          branch: session.branch ?? "",
+          blocker: session.currentBlocker ?? "",
+          recommendedNextStep: session.nextRecommendedTask ?? session.unfinished[0] ?? "",
+          activeDurationMs: session.activeDurationMs ?? 0,
+          testResults: session.testResults ?? [],
+          buildResults: session.buildResults ?? [],
+          deploymentStatus: session.deploymentStatus ?? "",
+          createdAt: startedAt,
+          updatedAt: session.endedAt,
+          lastUsedAt: session.endedAt,
+        });
+      }
       transaction.create(this.db.doc(activityPath(input.uid, result.activityId)), {
         projectId: project.id,
-        type: "session_completed",
-        summary: `Codex session completed: ${title}`,
+        type: workflow?.workSessionStatus === "paused" ? "session_paused" : "session_completed",
+        summary: `Codex ${workflow?.workSessionStatus === "paused" ? "paused" : "completed"}: ${title}`,
         entityType: "development_session",
         entityId: result.sessionId,
         metadata: JSON.stringify({
           source: "codex",
           externalSessionId: session.externalSessionId,
           promptId: result.promptId,
+          taskId: workflow?.taskId ?? null,
           branch: session.branch ?? null,
           commitCount: session.commits.length,
           ideaCount: result.ideaIds.length,
         }),
         source: "codex",
+        actor: "codex",
+        taskId: workflow?.taskId ?? null,
+        promptRecordId: result.promptId,
+        workSessionId: result.sessionId,
         externalSessionId: session.externalSessionId,
         createdAt: session.endedAt,
       });
@@ -425,6 +643,7 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
           externalSessionId: session.externalSessionId,
           tags: ["codex"],
           linkedTaskId: null,
+          convertedAt: null,
           createdAt: session.endedAt,
           updatedAt: session.endedAt,
         });
@@ -455,6 +674,11 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
         promptId: result.promptId,
         activityId: result.activityId,
         ideaIds: result.ideaIds,
+        ...(input.payload.workflow ? {
+          taskId: input.payload.workflow.taskId,
+          promptRecordId: input.payload.workflow.promptRecordId,
+          workSessionId: input.payload.workflow.workSessionId,
+        } : {}),
         receivedAt: input.receivedAt,
         endedAt: session.endedAt,
       });

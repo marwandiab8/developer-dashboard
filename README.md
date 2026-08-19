@@ -15,6 +15,8 @@ Personal external development brain for fast idea capture, project continuity, a
 - Firebase Authentication and user-scoped Firestore persistence
 - Secure server-side GitHub repository import and synchronization
 - Owner-scoped Codex session ingestion for prompts, sessions, activity, ideas, and continuity
+- A shared Idea → Task → ChatGPT prompt → Codex work-session workflow with active-time totals and meaningful timelines
+- An OAuth-protected remote MCP resource server with bounded Dashboard tools (implemented locally; not connected until a real authenticated call succeeds)
 
 GitHub-backed projects remain normal dashboard workbenches. Synchronization adds namespaced source metadata without replacing protected manual project fields or related work.
 
@@ -82,6 +84,8 @@ This capability does not make every Codex session automatic by itself. Each exte
     npm run report:codex-session -- verify --github-full-name example-owner/example-repository --json
 
 Functions and Firestore validation are documented in docs/SETUP.md.
+
+The complete shared workflow is documented in [docs/SHARED_WORKFLOW.md](docs/SHARED_WORKFLOW.md). The ChatGPT connection and tool contracts are in [docs/CHATGPT_MCP.md](docs/CHATGPT_MCP.md), and the compatibility/rollback plan is in [docs/MIGRATION_V2.md](docs/MIGRATION_V2.md).
 
 ## Current release status
 

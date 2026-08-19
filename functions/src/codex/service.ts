@@ -46,6 +46,7 @@ export class CodexIngestionService {
         schemaVersion: payload.schemaVersion,
         source: payload.source,
         session: payload.session,
+        workflow: payload.workflow,
       }),
       receivedAt: receivedAt.toISOString(),
     });

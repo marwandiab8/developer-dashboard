@@ -11,6 +11,11 @@ import { SCHEMA_VERSION, STORAGE_KEY } from "../constants";
 import { nowIso } from "../utils/time";
 import { dashboardDataSchema } from "../validation";
 import { seedDashboardData } from "../seed";
+import {
+  normalizeIdeaStatus,
+  normalizePromptStatus,
+  normalizeTaskStatus,
+} from "../workflow";
 
 const LOCAL_STATE_KEY = `${STORAGE_KEY}:state`;
 const LOCAL_BACKUP_KEY = `${STORAGE_KEY}:migration-backup`;
@@ -536,28 +541,96 @@ export const createMigrationLayer = (raw: unknown): DashboardData => {
 
   const parsed = dashboardDataSchema.safeParse(raw);
   if (parsed.success) {
-    if (parsed.data.schemaVersion === SCHEMA_VERSION) {
-      return parsed.data;
-    }
-
-    if (parsed.data.schemaVersion < SCHEMA_VERSION) {
+    const source = parsed.data;
+    const sessions = source.developmentSessions.map((session) => {
+      const relatedPrompt = source.codexPrompts.find((prompt) => prompt.relatedSessionId === session.id);
       return {
-        ...fallbackDashboard,
-        schemaVersion: SCHEMA_VERSION,
-        projects: parsed.data.projects ?? fallbackDashboard.projects,
-        ideas: parsed.data.ideas ?? fallbackDashboard.ideas,
-        tasks: parsed.data.tasks ?? fallbackDashboard.tasks,
-        brainDumps: parsed.data.brainDumps ?? fallbackDashboard.brainDumps,
-        scratchpads: parsed.data.scratchpads ?? fallbackDashboard.scratchpads,
-        architectureDecisions:
-          parsed.data.architectureDecisions ?? fallbackDashboard.architectureDecisions,
-        codexPrompts: parsed.data.codexPrompts ?? fallbackDashboard.codexPrompts,
-        notes: parsed.data.notes ?? fallbackDashboard.notes,
-        importantLinks: normaliseLinks(parsed.data.importantLinks ?? fallbackDashboard.importantLinks),
-        developmentSessions: parsed.data.developmentSessions ?? fallbackDashboard.developmentSessions,
-        activities: parsed.data.activities ?? fallbackDashboard.activities,
+        ...session,
+        taskId: session.taskId ?? session.tasksWorkedOn[0] ?? null,
+        promptRecordId: session.promptRecordId ?? relatedPrompt?.id ?? null,
+        source: session.source ?? "manual" as const,
+        activeStartedAt: session.status === "active"
+          ? session.activeStartedAt ?? session.startedAt
+          : null,
       };
-    }
+    });
+    const promptsByTask = new Map<string, typeof source.codexPrompts>();
+    source.codexPrompts.forEach((prompt) => {
+      if (!prompt.relatedTaskId) return;
+      promptsByTask.set(prompt.relatedTaskId, [
+        ...(promptsByTask.get(prompt.relatedTaskId) ?? []),
+        prompt,
+      ]);
+    });
+    const promptSequences = new Map<string, number>();
+    promptsByTask.forEach((prompts) => {
+      [...prompts]
+        .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+        .forEach((prompt, index) => promptSequences.set(prompt.id, index + 1));
+    });
+    const prompts = source.codexPrompts.map((prompt) => {
+      const normalizedStatus = normalizePromptStatus(prompt.status);
+      return {
+        ...prompt,
+        status: normalizedStatus,
+        ...(normalizedStatus !== prompt.status && !prompt.legacyStatus
+          ? { legacyStatus: prompt.status }
+          : {}),
+        source: prompt.source ?? "manual" as const,
+        createdBy: prompt.createdBy ?? (prompt.source === "codex" ? "codex" : "marwan"),
+        sequenceNumber: promptSequences.get(prompt.id) ?? prompt.sequenceNumber ?? 1,
+        promptSummary: prompt.promptSummary || prompt.purpose || prompt.title,
+        requestedChange: prompt.requestedChange || prompt.purpose,
+      };
+    });
+    const ideas = source.ideas.map((idea) => {
+      const normalizedStatus = normalizeIdeaStatus(idea.status);
+      return {
+        ...idea,
+        status: normalizedStatus,
+        ...(normalizedStatus !== idea.status && !idea.legacyStatus
+          ? { legacyStatus: idea.status }
+          : {}),
+        convertedAt: normalizedStatus === "converted"
+          ? idea.convertedAt ?? idea.updatedAt
+          : idea.convertedAt,
+      };
+    });
+    const tasks = source.tasks.map((task) => {
+      const normalizedStatus = normalizeTaskStatus(task.status);
+      const promptRecordIds = prompts
+        .filter((prompt) => prompt.relatedTaskId === task.id)
+        .map((prompt) => prompt.id);
+      const workSessionIds = sessions
+        .filter((session) => session.taskId === task.id || session.tasksWorkedOn.includes(task.id))
+        .map((session) => session.id);
+      return {
+        ...task,
+        status: normalizedStatus,
+        ...(normalizedStatus !== task.status && !task.legacyStatus
+          ? { legacyStatus: task.status }
+          : {}),
+        readyAt: normalizedStatus === "ready" ? task.readyAt ?? task.updatedAt : task.readyAt,
+        lastWorkedAt: task.lastWorkedAt ?? task.startedAt ?? null,
+        promptRecordIds: [...new Set([...task.promptRecordIds, ...promptRecordIds])],
+        workSessionIds: [...new Set([...task.workSessionIds, ...workSessionIds])],
+      };
+    });
+
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      projects: source.projects,
+      ideas,
+      tasks,
+      brainDumps: source.brainDumps,
+      scratchpads: source.scratchpads,
+      architectureDecisions: source.architectureDecisions,
+      codexPrompts: prompts,
+      notes: source.notes,
+      importantLinks: normaliseLinks(source.importantLinks),
+      developmentSessions: sessions,
+      activities: source.activities,
+    };
   }
 
   return fallbackDashboard;

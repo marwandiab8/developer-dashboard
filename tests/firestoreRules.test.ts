@@ -160,11 +160,13 @@ describeWithEmulator("Firestore client privilege boundaries", () => {
     ));
   });
 
-  it("denies browser access to Codex ingestion receipts, throttle state, and continuity ownership", async () => {
+  it("denies browser access to backend-only Codex and MCP control records", async () => {
     const paths = [
       "users/owner/codexIngestion/minute-2026-08-11T14-00",
       "users/owner/codexIngestionReceipts/receipt-1",
       "users/owner/codexContinuity/project-1",
+      "users/owner/mcpAuditEvents/audit-1",
+      "users/owner/mcpIdempotencyReceipts/receipt-1",
     ];
 
     await environment.withSecurityRulesDisabled(async (context) => {

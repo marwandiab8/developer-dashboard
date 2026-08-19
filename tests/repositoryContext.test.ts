@@ -3611,7 +3611,12 @@ describe("migration marker startup evaluation", () => {
       await flushAsyncWork();
       expect(cloudRepository.applyAction).toHaveBeenCalledWith(
         expect.objectContaining({ type: "task_add" }),
-        undefined,
+        expect.objectContaining({
+          type: "task_created",
+          actor: "marwan",
+          projectId: cloudData.projects[0].id,
+          taskId: expect.any(String),
+        }),
         expect.objectContaining({ projectId: cloudData.projects[0].id }),
         expect.any(String),
         expect.objectContaining({ version: 1, fingerprint: expect.any(String) }),

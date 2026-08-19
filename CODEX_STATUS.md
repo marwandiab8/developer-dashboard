@@ -1,8 +1,33 @@
 # CODEX_STATUS
 
-Current record date: 2026-08-11
+Current record date: 2026-08-19
 
 This is the sole current operational and release-status record. `CODEX-STATUS.md` is an obsolete pointer only.
+
+## Local shared-workflow candidate — not deployed
+
+- The current dirty working tree contains the schema version 2 shared Idea → Task → ChatGPT prompt → Codex work-session workflow, task/project timelines and active-time totals, task detail route, simplified navigation/dashboard/project surfaces, and an OAuth-protected bounded MCP resource server.
+- Existing local-first storage, Firebase Authentication, UID-scoped Firestore, rules, GitHub synchronization ownership, routes, and Codex ingestion are extended rather than replaced. The local migration preserves legacy status values and document IDs.
+- The MCP implementation is not connected to ChatGPT. No OAuth provider/client was configured, no secret was created, no Function/rules/frontend was deployed, and no authenticated live MCP tool call has occurred.
+- Production migration remains prohibited until explicit approval. The migration and rollback plan is `docs/MIGRATION_V2.md`; OAuth setup and the connection gate are `docs/CHATGPT_MCP.md`.
+- Local verification is complete and recorded below. The only visible local warning is the expected Firebase-configuration banner because this preview intentionally has no Firebase environment values; local mode remains usable.
+
+## Local shared-workflow validation — 2026-08-19
+
+- Root `npm run lint`: exit 0 with no warnings.
+- Root `npm run typecheck`: exit 0.
+- Root `npm test`: exit 0; 24 files passed, the emulator-only rules file was skipped, 272 tests passed, and 8 were skipped.
+- Root `npm run test:rules`: exit 0; all 8 Firestore emulator authorization and ownership tests passed.
+- Root `npm run build`: exit 0; Next.js 16.3.0 produced all 9 routes, including the new task-detail route.
+- Functions `npm run lint`: exit 0 with the existing pages-directory rule notice.
+- Functions `npm run typecheck`: exit 0.
+- Functions `npm test`: exit 0; all 8 compiled suites passed, including MCP authorization/input/idempotency and extended Codex-ingestion coverage.
+- Functions `npm run build`: exit 0.
+- Desktop browser verification passed for Home, Projects, Project Overview, Project Timeline, Ideas, and task detail/completed states.
+- Mobile browser verification passed at 390 x 844 for Home, Project, and task detail.
+- Browser interaction checks passed for idea conversion, start/pause work, task completion, and reopening to Ready.
+- Every checked page had zero application console errors, overlays, horizontal overflow, raw internal event names, duplicate menus, or unlabeled visible controls. Keyboard focus was visibly rendered.
+- Non-failing validation noise was limited to existing React test `act(...)` warnings, expected Firestore rule-denial logs, the Firebase CLI `punycode` deprecation, the Functions lint notice above, and external headless-Chrome service logs that were not page console errors.
 
 ## Current working-tree status
 

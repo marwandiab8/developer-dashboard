@@ -106,6 +106,16 @@ The Codex HTTPS endpoint uses a separate machine-ingestion boundary:
 
 The ingestion credential authorizes only this endpoint. It does not grant direct Firestore, Firebase Admin, GitHub, deployment, or service-account access. Rotate it by creating a new Secret Manager version and redeploying only the bound Function; then remove the old local environment value. Never reuse the GitHub token for ingestion.
 
+## ChatGPT MCP authorization boundary
+
+The local `dashboardMcp` implementation is a private OAuth 2.1 resource server using MCP Streamable HTTP. It validates the access-token signature through the configured JWKS and checks issuer, audience, expiry, accepted algorithm, exact owner subject, and per-tool scope on every POST. It then derives `DASHBOARD_OWNER_UID` server-side. Caller-supplied UIDs are not accepted.
+
+MCP tools expose whitelisted projections and strict bounded Zod inputs. Exact project/task relationships are checked before every dependent read or write. State-changing tools use transactions, deterministic idempotency receipts, and backend-only audit records. Completion, cancellation, idea conversion, and blocker operations require explicit confirmation where appropriate. Browser rules deny `mcpAuditEvents` and `mcpIdempotencyReceipts`.
+
+There is no arbitrary Firestore, Firebase Admin, repository, command, secret, deployment, or GitHub-token tool. Input containing credentials, authorization headers, private-key material, service-account shapes, or configured secret values is rejected. Full prompts are optional; prompt summaries are required.
+
+The Function is not a token issuer. An established OAuth/OIDC provider must supply authorization-code plus PKCE and audience-bound access tokens. This local implementation must not be described as connected until a deployed, authenticated ChatGPT tool call succeeds. Configuration names and the connection checklist are in `docs/CHATGPT_MCP.md`.
+
 ## Codex payload safety
 
 - Both the raw request body and serialized validated payload are limited to 262,144 UTF-8 bytes.

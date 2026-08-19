@@ -1,16 +1,46 @@
 export type ProjectStatus = "active" | "on_hold" | "completed" | "archived";
 
-export type IdeaStatus = "inbox" | "reviewed" | "accepted" | "rejected" | "converted" | "archived";
+export type IdeaStatus =
+  | "inbox"
+  | "ready_for_review"
+  | "converted"
+  | "archived"
+  // Read compatibility for schema V1. The V2 migration normalizes these.
+  | "reviewed"
+  | "accepted"
+  | "rejected";
 export type IdeaSource = "phone" | "ipad" | "desktop" | "ChatGPT" | "Codex" | "voice" | "other";
 export type IdeaPriority = "low" | "medium" | "high" | "critical";
 
-export type TaskStatus = "backlog" | "ready" | "in_progress" | "blocked" | "testing" | "completed" | "cancelled";
+export type TaskStatus =
+  | "open"
+  | "ready"
+  | "in_progress"
+  | "blocked"
+  | "completed"
+  | "cancelled"
+  // Read compatibility for schema V1. The V2 migration normalizes these.
+  | "backlog"
+  | "testing";
 export type TaskType = "feature" | "improvement" | "bug" | "research" | "maintenance" | "documentation";
 
 export type DecisionStatus = "proposed" | "accepted" | "replaced" | "deferred" | "rejected";
-export type PromptStatus = "draft" | "ready" | "used" | "archived";
+export type PromptStatus =
+  | "prepared"
+  | "started"
+  | "completed"
+  | "failed"
+  | "superseded"
+  // Read compatibility for schema V1. The V2 migration normalizes these.
+  | "draft"
+  | "ready"
+  | "used"
+  | "archived";
 export type BrainDumpStatus = "active" | "converted" | "archived";
-export type SessionStatus = "active" | "completed";
+export type SessionStatus = "active" | "paused" | "completed" | "abandoned";
+export type WorkflowActor = "marwan" | "chatgpt" | "codex";
+export type PromptSource = "chatgpt" | "codex" | "manual";
+export type WorkSessionSource = "chatgpt" | "codex" | "manual";
 export type ManualProjectStatus = "planning" | "active" | "paused" | "blocked" | "completed" | "archived";
 export type ExternalActivityStatus = "active_recently" | "quiet" | "stale" | "never_committed" | "unavailable";
 export type ExternalSyncStatus = "success" | "failed" | "unavailable";
@@ -29,11 +59,25 @@ export type ActivityType =
   | "project_created"
   | "idea_captured"
   | "idea_converted"
+  | "idea_updated"
+  | "task_created"
   | "task_started"
+  | "task_status_changed"
+  | "task_blocked"
+  | "task_reopened"
   | "task_completed"
+  | "prompt_prepared"
+  | "prompt_started"
+  | "prompt_completed"
+  | "prompt_failed"
+  | "work_summary_added"
+  | "blocker_recorded"
   | "decision_accepted"
   | "prompt_used"
   | "session_started"
+  | "session_paused"
+  | "session_resumed"
+  | "session_corrected"
   | "session_completed"
   | "resume_generated"
   | "ai_context_generated"
@@ -119,6 +163,8 @@ export interface Idea {
   externalSessionId?: string;
   tags: string[];
   linkedTaskId: string | null;
+  convertedAt: string | null;
+  legacyStatus?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,6 +185,16 @@ export interface Task {
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  readyAt: string | null;
+  lastWorkedAt: string | null;
+  totalActiveDurationMs: number;
+  promptRecordIds: string[];
+  workSessionIds: string[];
+  recommendedNextStep: string;
+  githubBranch: string;
+  githubCommit: string;
+  githubPullRequest: string;
+  legacyStatus?: string;
 }
 
 export interface BrainDump {
@@ -181,9 +237,27 @@ export interface CodexPrompt {
   resultSummary: string;
   status: PromptStatus;
   relatedTaskId: string | null;
-  relatedSessionId?: string | null;
-  source?: "codex";
+  relatedSessionId: string | null;
+  source: PromptSource;
   externalSessionId?: string;
+  sequenceNumber: number;
+  promptSummary: string;
+  requestedChange: string;
+  createdBy: WorkflowActor;
+  completedWork: string[];
+  unfinishedWork: string[];
+  problemsDiscovered: string[];
+  decisionsMade: string[];
+  filesModified: string[];
+  commits: string[];
+  branch: string;
+  blocker: string;
+  recommendedNextStep: string;
+  activeDurationMs: number;
+  testResults: string[];
+  buildResults: string[];
+  deploymentStatus: string;
+  legacyStatus?: string;
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string | null;
@@ -219,7 +293,9 @@ export interface DevelopmentSession {
   endedAt: string | null;
   objective: string;
   summary: string;
-  source?: "codex";
+  taskId: string | null;
+  promptRecordId: string | null;
+  source: WorkSessionSource;
   externalSessionId?: string;
   branch?: string;
   completedItems?: string[];
@@ -236,6 +312,14 @@ export interface DevelopmentSession {
   nextStartingPoint: string;
   status: SessionStatus;
   notes: string;
+  activeStartedAt: string | null;
+  activeDurationMs: number;
+  resumeFromNote: string;
+  blocker: string;
+  nextStep: string;
+  testResults: string[];
+  buildResults: string[];
+  deploymentStatus: string;
 }
 
 export interface ActivityEvent {
@@ -247,6 +331,10 @@ export interface ActivityEvent {
   entityId: string;
   metadata: string;
   source?: "codex";
+  actor?: WorkflowActor;
+  taskId?: string | null;
+  promptRecordId?: string | null;
+  workSessionId?: string | null;
   externalSessionId?: string;
   createdAt: string;
 }

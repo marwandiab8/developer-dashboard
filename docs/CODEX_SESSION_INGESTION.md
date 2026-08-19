@@ -8,6 +8,14 @@ The HTTPS export is `ingestCodexSession`. This document defines its V1 contract 
 
 This feature also does not make every Codex session automatic merely by existing in Developer Dashboard. Each external project must opt in by loading the two helper environment variables and adopting the end-of-session instruction below.
 
+## Exact workflow relationships
+
+The V1 report remains backward compatible. A report may additionally include a `workflow` object containing exact `taskId`, `promptRecordId`, and `workSessionId` values plus prompt/session outcomes and an optional explicitly authorized task status request. The persistence transaction verifies every record belongs to the resolved project before updating it.
+
+For a workflow-linked completion, Codex reports start/finish timestamps, active duration, tests, build, deployment status, completed/unfinished work, problems, decisions, files, commits, blocker, and next step. The transaction updates the existing prompt, finishes or pauses the existing work session, replaces that session's contribution to the task total, and creates one deterministic task/project timeline event. The ingestion receipt makes an identical retry duration- and event-idempotent.
+
+Finishing a Codex prompt never completes the task by inference. `requestedTaskStatus: "completed"` is honored only when `taskCompletionAuthorized` is explicitly true. Otherwise final completion remains Marwan's decision.
+
 ## Endpoint and authentication
 
 Send one HTTPS POST to the deployed `ingestCodexSession` URL with:

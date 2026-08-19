@@ -57,6 +57,16 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // ChatGPT reaches bounded Admin SDK tools only after OAuth verification.
+      // Browser clients cannot read tool audits or retry receipts directly.
+      match /mcpAuditEvents/{document=**} {
+        allow read, write: if false;
+      }
+
+      match /mcpIdempotencyReceipts/{document=**} {
+        allow read, write: if false;
+      }
+
       // Every optimistic client mutation receives an immutable transaction
       // receipt. A retained local journal can therefore distinguish an
       // acknowledged write from one that never committed without replaying

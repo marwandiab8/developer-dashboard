@@ -83,16 +83,102 @@ import {
 } from "./types";
 import { useAuth } from "../auth/useAuth";
 import { SCHEMA_VERSION, STORAGE_KEY } from "../constants";
+import { normalizeTaskStatus } from "../workflow";
+
+type TaskGeneratedFields =
+  | "id"
+  | "createdAt"
+  | "updatedAt"
+  | "readyAt"
+  | "lastWorkedAt"
+  | "totalActiveDurationMs"
+  | "promptRecordIds"
+  | "workSessionIds"
+  | "recommendedNextStep"
+  | "githubBranch"
+  | "githubCommit"
+  | "githubPullRequest"
+  | "legacyStatus";
+type NewTaskInput = Omit<Task, TaskGeneratedFields> & Partial<Pick<Task,
+  "readyAt" | "lastWorkedAt" | "recommendedNextStep" | "githubBranch" | "githubCommit" | "githubPullRequest"
+>>;
+
+type PromptGeneratedFields =
+  | "id"
+  | "createdAt"
+  | "updatedAt"
+  | "lastUsedAt"
+  | "sequenceNumber"
+  | "promptSummary"
+  | "requestedChange"
+  | "createdBy"
+  | "completedWork"
+  | "unfinishedWork"
+  | "problemsDiscovered"
+  | "decisionsMade"
+  | "filesModified"
+  | "commits"
+  | "branch"
+  | "blocker"
+  | "recommendedNextStep"
+  | "activeDurationMs"
+  | "testResults"
+  | "buildResults"
+  | "deploymentStatus"
+  | "legacyStatus"
+  | "source"
+  | "relatedSessionId";
+type NewPromptInput = Omit<CodexPrompt, PromptGeneratedFields> & Partial<Pick<CodexPrompt,
+  "sequenceNumber" | "promptSummary" | "requestedChange" | "createdBy" | "completedWork"
+  | "unfinishedWork" | "problemsDiscovered" | "decisionsMade" | "filesModified" | "commits"
+  | "branch" | "blocker" | "recommendedNextStep" | "activeDurationMs" | "testResults" | "buildResults"
+  | "deploymentStatus" | "source" | "relatedSessionId"
+>>;
+
+type SessionGeneratedFields =
+  | "id"
+  | "startedAt"
+  | "endedAt"
+  | "status"
+  | "activeStartedAt"
+  | "activeDurationMs"
+  | "taskId"
+  | "promptRecordId"
+  | "source"
+  | "resumeFromNote"
+  | "blocker"
+  | "nextStep"
+  | "testResults"
+  | "buildResults"
+  | "deploymentStatus";
+type NewSessionInput = Omit<DevelopmentSession, SessionGeneratedFields> & Partial<Pick<DevelopmentSession,
+  "activeDurationMs" | "taskId" | "promptRecordId" | "source" | "resumeFromNote" | "blocker" | "nextStep"
+  | "testResults" | "buildResults" | "deploymentStatus"
+>>;
 
 const ActivityTypeSet = new Set<ActivityType>([
   "project_created",
   "idea_captured",
   "idea_converted",
+  "idea_updated",
+  "task_created",
   "task_started",
+  "task_status_changed",
+  "task_blocked",
+  "task_reopened",
   "task_completed",
+  "prompt_prepared",
+  "prompt_started",
+  "prompt_completed",
+  "prompt_failed",
+  "work_summary_added",
+  "blocker_recorded",
   "decision_accepted",
   "prompt_used",
   "session_started",
+  "session_paused",
+  "session_resumed",
+  "session_corrected",
   "session_completed",
   "resume_generated",
   "ai_context_generated",
@@ -241,6 +327,10 @@ const buildActivityFromInput = (event: {
   entityType: string;
   entityId: string;
   metadata: string;
+  actor?: ActivityEvent["actor"];
+  taskId?: string | null;
+  promptRecordId?: string | null;
+  workSessionId?: string | null;
 }) =>
   activityEventSchema.parse({
     id: makeId(),
@@ -250,6 +340,10 @@ const buildActivityFromInput = (event: {
     entityType: event.entityType,
     entityId: event.entityId,
     metadata: event.metadata,
+    ...(event.actor ? { actor: event.actor } : {}),
+    ...(event.taskId !== undefined ? { taskId: event.taskId } : {}),
+    ...(event.promptRecordId !== undefined ? { promptRecordId: event.promptRecordId } : {}),
+    ...(event.workSessionId !== undefined ? { workSessionId: event.workSessionId } : {}),
     createdAt: nowIso(),
   });
 
@@ -276,16 +370,17 @@ export interface DashboardContextValue {
     payload: { projectId: string; text: string; classification: CaptureClassification },
   ) => Promise<MutationResult>;
 
-  addIdea: (idea: Omit<Idea, "id" | "createdAt" | "updatedAt" | "linkedTaskId">) => Idea;
+  addIdea: (idea: Omit<Idea, "id" | "createdAt" | "updatedAt" | "linkedTaskId" | "convertedAt" | "legacyStatus">) => Idea;
   updateIdea: (id: string, updates: Partial<Idea>) => void;
   archiveIdea: (id: string) => void;
   convertIdeaToTask: (ideaId: string) => Task | null;
 
-  addTask: (task: Omit<Task, "id" | "createdAt" | "updatedAt">) => Task;
+  addTask: (task: NewTaskInput) => Task;
   updateTask: (id: string, updates: Partial<Task>) => void;
   startTask: (id: string) => void;
   blockTask: (id: string, reason: string) => void;
   completeTask: (id: string) => void;
+  setTaskStatus: (id: string, status: Task["status"], blocker?: string) => void;
 
   addBrainDump: (payload: Omit<BrainDump, "id" | "createdAt" | "updatedAt" | "status" | "convertedEntityType" | "convertedEntityId">) => BrainDump;
   updateBrainDump: (id: string, updates: Partial<BrainDump>) => void;
@@ -302,9 +397,17 @@ export interface DashboardContextValue {
   updateDecisionStatus: (id: string, status: ArchitectureDecision["status"]) => void;
 
   upsertPrompt: (
-    prompt: Omit<CodexPrompt, "id" | "createdAt" | "updatedAt" | "lastUsedAt">,
+    prompt: NewPromptInput,
   ) => CodexPrompt;
   markPromptUsed: (id: string, summary: string) => void;
+  createTaskPromptRecord: (payload: {
+    taskId: string;
+    summary: string;
+    requestedChange: string;
+    prompt?: string;
+    source?: CodexPrompt["source"];
+    workSessionId?: string | null;
+  }) => CodexPrompt | null;
 
   addNote: (note: Omit<Note, "id" | "createdAt" | "updatedAt">) => Note;
   updateNote: (id: string, updates: Partial<Note>) => void;
@@ -312,9 +415,23 @@ export interface DashboardContextValue {
   addLink: (link: Omit<ImportantLink, "id" | "createdAt" | "updatedAt">) => ImportantLink;
   updateLink: (id: string, updates: Partial<ImportantLink>) => void;
 
-  startSession: (session: Omit<DevelopmentSession, "id" | "startedAt" | "endedAt" | "status">) => DevelopmentSession;
+  startSession: (session: NewSessionInput) => DevelopmentSession;
   endSession: (id: string, updates: Partial<DevelopmentSession>) => void;
   appendSessionNote: (id: string, note: string) => void;
+  startTaskWorkSession: (payload: {
+    taskId: string;
+    promptRecordId?: string | null;
+    source?: DevelopmentSession["source"];
+    resumeFromNote?: string;
+  }) => DevelopmentSession | null;
+  pauseTaskWorkSession: (id: string, nextStep?: string) => void;
+  resumeTaskWorkSession: (id: string, resumeFromNote?: string) => void;
+  finishTaskWorkSession: (
+    id: string,
+    updates?: Partial<DevelopmentSession>,
+    status?: "completed" | "abandoned",
+  ) => void;
+  correctTaskWorkSession: (id: string, activeDurationMs: number) => void;
 
   search: (query: string) => SearchResult[];
 }
@@ -825,6 +942,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         entityType: string;
         entityId: string;
         metadata: string;
+        actor?: ActivityEvent["actor"];
+        taskId?: string | null;
+        promptRecordId?: string | null;
+        workSessionId?: string | null;
       },
     ): Promise<MutationResult> => {
       if (action.type === "seed") {
@@ -2508,12 +2629,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   );
 
   const addIdea = useCallback(
-    (idea: Omit<Idea, "id" | "createdAt" | "updatedAt" | "linkedTaskId">): Idea => {
+    (idea: Omit<Idea, "id" | "createdAt" | "updatedAt" | "linkedTaskId" | "convertedAt" | "legacyStatus">): Idea => {
       const now = nowIso();
       const parsed = ideaSchema.parse({
         ...idea,
         id: makeId(),
         linkedTaskId: null,
+        convertedAt: null,
         createdAt: now,
         updatedAt: now,
       });
@@ -2553,6 +2675,13 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         setLastActionError("Idea not found.");
         return null;
       }
+      if (source.linkedTaskId) {
+        const existing = dataRef.current.tasks.find((task) =>
+          task.id === source.linkedTaskId && task.projectId === source.projectId);
+        if (existing) return existing;
+        setLastActionError("This idea already points to a task that is not available in the project.");
+        return null;
+      }
 
       const now = nowIso();
       const parsedTask = taskSchema.parse({
@@ -2569,6 +2698,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         implementationNotes: "",
         startedAt: null,
         completedAt: null,
+        readyAt: now,
+        lastWorkedAt: null,
+        totalActiveDurationMs: 0,
+        promptRecordIds: [],
+        workSessionIds: [],
+        recommendedNextStep: "Review the requested change and acceptance criteria with ChatGPT.",
+        githubBranch: "",
+        githubCommit: "",
+        githubPullRequest: "",
         createdAt: now,
         updatedAt: now,
       });
@@ -2580,6 +2718,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             ideaId: source.id,
             taskId: parsedTask.id,
             task: parsedTask,
+            convertedAt: now,
           },
         },
         {
@@ -2589,6 +2728,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           entityType: "task",
           entityId: parsedTask.id,
           metadata: source.id,
+          actor: "marwan",
+          taskId: parsedTask.id,
         },
       );
 
@@ -2598,15 +2739,37 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   );
 
   const addTask = useCallback(
-    (task: Omit<Task, "id" | "createdAt" | "updatedAt">): Task => {
+    (task: NewTaskInput): Task => {
       const now = nowIso();
       const parsed = taskSchema.parse({
         ...task,
         id: makeId(),
+        status: normalizeTaskStatus(task.status),
+        readyAt: normalizeTaskStatus(task.status) === "ready" ? task.readyAt ?? now : task.readyAt ?? null,
+        lastWorkedAt: task.lastWorkedAt ?? null,
+        totalActiveDurationMs: 0,
+        promptRecordIds: [],
+        workSessionIds: [],
+        recommendedNextStep: task.recommendedNextStep ?? "",
+        githubBranch: task.githubBranch ?? "",
+        githubCommit: task.githubCommit ?? "",
+        githubPullRequest: task.githubPullRequest ?? "",
         createdAt: now,
         updatedAt: now,
       });
-      void applyAction({ type: "task_add", payload: parsed });
+      void applyAction(
+        { type: "task_add", payload: parsed },
+        {
+          projectId: parsed.projectId,
+          type: "task_created",
+          summary: `Created task: ${parsed.title}`,
+          entityType: "task",
+          entityId: parsed.id,
+          metadata: parsed.details,
+          actor: "marwan",
+          taskId: parsed.id,
+        },
+      );
       return parsed;
     },
     [applyAction],
@@ -2675,6 +2838,49 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     [applyAction],
   );
 
+  const setTaskStatus = useCallback(
+    (id: string, status: Task["status"], blocker?: string) => {
+      const task = dataRef.current.tasks.find((entry) => entry.id === id);
+      if (!task) {
+        setLastActionError("Task not found.");
+        return;
+      }
+      const previous = normalizeTaskStatus(task.status);
+      const next = normalizeTaskStatus(status);
+      if (next === "blocked" && !blocker?.trim()) {
+        setLastActionError("Describe the blocker before marking this task blocked.");
+        return;
+      }
+      const type = next === "completed"
+        ? "task_completed"
+        : next === "blocked"
+          ? "task_blocked"
+          : previous === "completed"
+            ? "task_reopened"
+            : next === "in_progress"
+              ? "task_started"
+              : "task_status_changed";
+      const label = next.replaceAll("_", " ");
+      const at = nowIso();
+      void applyAction(
+        { type: "task_set_status", payload: { id, status: next, blocker, at } },
+        {
+          projectId: task.projectId,
+          type,
+          summary: next === "blocked"
+            ? `Blocked task: ${task.title}`
+            : `${next === "completed" ? "Completed" : previous === "completed" ? "Reopened" : "Moved"} task: ${task.title}${type === "task_status_changed" ? ` to ${label}` : ""}`,
+          entityType: "task",
+          entityId: task.id,
+          metadata: next === "blocked" ? blocker!.trim() : `${previous} -> ${next}`,
+          actor: "marwan",
+          taskId: task.id,
+        },
+      );
+    },
+    [applyAction],
+  );
+
   const addBrainDump = useCallback(
     (
       payload: Omit<BrainDump, "id" | "createdAt" | "updatedAt" | "status" | "convertedEntityType" | "convertedEntityId">,
@@ -2715,7 +2921,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         projectId: entry.projectId,
         text: entry.text,
         description: "Converted from brain dump",
-        status: "accepted",
+        status: "ready_for_review",
         priority: "medium",
         source: "other",
         tags: [],
@@ -2750,7 +2956,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         title: entry.text.slice(0, 80),
         details: entry.text,
         type: "feature",
-        status: "backlog",
+        status: "open",
         priority: "medium",
         blockedReason: "",
         sourceIdeaId: null,
@@ -2817,15 +3023,36 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [applyAction]);
 
   const upsertPrompt = useCallback(
-    (
-      prompt: Omit<CodexPrompt, "id" | "createdAt" | "updatedAt" | "lastUsedAt">,
-    ): CodexPrompt => {
+    (prompt: NewPromptInput): CodexPrompt => {
       const now = nowIso();
+      const taskPrompts = prompt.relatedTaskId
+        ? dataRef.current.codexPrompts.filter((entry) => entry.relatedTaskId === prompt.relatedTaskId)
+        : [];
       const parsed = codexPromptSchema.parse({
         ...prompt,
         id: makeId(),
-        status: prompt.status || "draft",
+        status: prompt.status || "prepared",
         relatedTaskId: prompt.relatedTaskId || null,
+        relatedSessionId: prompt.relatedSessionId ?? null,
+        source: prompt.source ?? "manual",
+        sequenceNumber: prompt.sequenceNumber ?? taskPrompts.length + 1,
+        promptSummary: prompt.promptSummary ?? prompt.purpose,
+        requestedChange: prompt.requestedChange ?? prompt.purpose,
+        createdBy: prompt.createdBy
+          ?? (prompt.source === "chatgpt" ? "chatgpt" : prompt.source === "codex" ? "codex" : "marwan"),
+        completedWork: prompt.completedWork ?? [],
+        unfinishedWork: prompt.unfinishedWork ?? [],
+        problemsDiscovered: prompt.problemsDiscovered ?? [],
+        decisionsMade: prompt.decisionsMade ?? [],
+        filesModified: prompt.filesModified ?? [],
+        commits: prompt.commits ?? [],
+        branch: prompt.branch ?? "",
+        blocker: prompt.blocker ?? "",
+        recommendedNextStep: prompt.recommendedNextStep ?? "",
+        activeDurationMs: prompt.activeDurationMs ?? 0,
+        testResults: prompt.testResults ?? [],
+        buildResults: prompt.buildResults ?? [],
+        deploymentStatus: prompt.deploymentStatus ?? "",
         createdAt: now,
         updatedAt: now,
         lastUsedAt: null,
@@ -2861,6 +3088,51 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     },
     [applyAction],
   );
+
+  const createTaskPromptRecord = useCallback((payload: {
+    taskId: string;
+    summary: string;
+    requestedChange: string;
+    prompt?: string;
+    source?: CodexPrompt["source"];
+    workSessionId?: string | null;
+  }): CodexPrompt | null => {
+    const task = dataRef.current.tasks.find((entry) => entry.id === payload.taskId);
+    if (!task) {
+      setLastActionError("Task not found.");
+      return null;
+    }
+    const source = payload.source ?? "chatgpt";
+    const record = upsertPrompt({
+      projectId: task.projectId,
+      title: payload.summary.slice(0, 160),
+      purpose: payload.summary,
+      prompt: payload.prompt || payload.requestedChange,
+      resultSummary: "",
+      status: "prepared",
+      relatedTaskId: task.id,
+      relatedSessionId: payload.workSessionId ?? null,
+      source,
+      promptSummary: payload.summary,
+      requestedChange: payload.requestedChange,
+      createdBy: source === "chatgpt" ? "chatgpt" : source === "codex" ? "codex" : "marwan",
+    });
+    void applyAction(
+      { type: "activity_add", payload: buildActivityFromInput({
+        projectId: task.projectId,
+        type: "prompt_prepared",
+        summary: `Prepared prompt ${record.sequenceNumber} for ${task.title}`,
+        entityType: "prompt",
+        entityId: record.id,
+        metadata: payload.summary,
+        actor: record.createdBy,
+        taskId: task.id,
+        promptRecordId: record.id,
+        workSessionId: record.relatedSessionId,
+      }) },
+    );
+    return record;
+  }, [applyAction, upsertPrompt]);
 
   const addNote = useCallback(
     (note: Omit<Note, "id" | "createdAt" | "updatedAt">): Note => {
@@ -2901,7 +3173,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [applyAction]);
 
   const startSession = useCallback(
-    (session: Omit<DevelopmentSession, "id" | "startedAt" | "endedAt" | "status">): DevelopmentSession => {
+    (session: NewSessionInput): DevelopmentSession => {
       const now = nowIso();
       const parsed = developmentSessionSchema.parse({
         ...session,
@@ -2909,6 +3181,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         startedAt: now,
         endedAt: null,
         status: "active",
+        taskId: session.taskId ?? null,
+        promptRecordId: session.promptRecordId ?? null,
+        source: session.source ?? "manual",
         summary: session.summary || "",
         objective: session.objective,
         tasksWorkedOn: session.tasksWorkedOn || [],
@@ -2921,6 +3196,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         commits: session.commits || [],
         nextStartingPoint: session.nextStartingPoint || "",
         notes: session.notes || "",
+        activeStartedAt: now,
+        activeDurationMs: session.activeDurationMs ?? 0,
+        resumeFromNote: session.resumeFromNote ?? "",
+        blocker: session.blocker ?? "",
+        nextStep: session.nextStep ?? session.nextStartingPoint ?? "",
+        testResults: session.testResults ?? [],
+        buildResults: session.buildResults ?? [],
+        deploymentStatus: session.deploymentStatus ?? "",
       });
 
       void applyAction(
@@ -2935,6 +3218,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           entityType: "session",
           entityId: parsed.id,
           metadata: "started",
+          actor: parsed.source === "manual" ? "marwan" : parsed.source,
+          taskId: parsed.taskId,
+          promptRecordId: parsed.promptRecordId,
+          workSessionId: parsed.id,
         },
       );
       return parsed;
@@ -2950,16 +3237,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      const at = nowIso();
       void applyAction(
         {
-          type: "session_end",
-          payload: {
-            id,
-            updates: {
-              ...updates,
-              endedAt: nowIso(),
-            },
-          },
+          type: "session_finish",
+          payload: { id, updates, at, status: "completed" },
         },
         {
           projectId: session.projectId,
@@ -2968,6 +3250,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           entityType: "session",
           entityId: id,
           metadata: "completed",
+          actor: session.source === "manual" ? "marwan" : session.source,
+          taskId: session.taskId,
+          promptRecordId: session.promptRecordId,
+          workSessionId: session.id,
         },
       );
     },
@@ -2976,6 +3262,147 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const appendSessionNote = useCallback((id: string, note: string) => {
     void applyAction({ type: "session_note_append", payload: { id, note } });
+  }, [applyAction]);
+
+  const startTaskWorkSession = useCallback((payload: {
+    taskId: string;
+    promptRecordId?: string | null;
+    source?: DevelopmentSession["source"];
+    resumeFromNote?: string;
+  }): DevelopmentSession | null => {
+    const task = dataRef.current.tasks.find((entry) => entry.id === payload.taskId);
+    if (!task) {
+      setLastActionError("Task not found.");
+      return null;
+    }
+    const existingActive = dataRef.current.developmentSessions.find((session) =>
+      session.taskId === task.id && session.status === "active");
+    if (existingActive) return existingActive;
+    return startSession({
+      projectId: task.projectId,
+      taskId: task.id,
+      promptRecordId: payload.promptRecordId ?? null,
+      source: payload.source ?? "manual",
+      objective: task.title,
+      summary: "",
+      branch: task.githubBranch || undefined,
+      completedItems: [],
+      unfinishedItems: [],
+      currentBlocker: task.blockedReason,
+      tasksWorkedOn: [task.id],
+      tasksCompleted: [],
+      ideasAdded: [],
+      problemsDiscovered: [],
+      decisionsMade: [],
+      promptsUsed: payload.promptRecordId ? [payload.promptRecordId] : [],
+      filesModified: [],
+      commits: [],
+      nextStartingPoint: task.recommendedNextStep,
+      notes: "",
+      resumeFromNote: payload.resumeFromNote ?? task.recommendedNextStep,
+      blocker: task.blockedReason,
+      nextStep: task.recommendedNextStep,
+    });
+  }, [startSession]);
+
+  const pauseTaskWorkSession = useCallback((id: string, nextStep?: string) => {
+    const session = dataRef.current.developmentSessions.find((entry) => entry.id === id);
+    if (!session) {
+      setLastActionError("Work session not found.");
+      return;
+    }
+    const at = nowIso();
+    void applyAction(
+      { type: "session_pause", payload: { id, at, nextStep } },
+      {
+        projectId: session.projectId,
+        type: "session_paused",
+        summary: `Paused work on ${session.objective}`,
+        entityType: "session",
+        entityId: session.id,
+        metadata: nextStep ?? session.nextStep,
+        actor: session.source === "manual" ? "marwan" : session.source,
+        taskId: session.taskId,
+        promptRecordId: session.promptRecordId,
+        workSessionId: session.id,
+      },
+    );
+  }, [applyAction]);
+
+  const resumeTaskWorkSession = useCallback((id: string, resumeFromNote?: string) => {
+    const session = dataRef.current.developmentSessions.find((entry) => entry.id === id);
+    if (!session) {
+      setLastActionError("Work session not found.");
+      return;
+    }
+    const at = nowIso();
+    void applyAction(
+      { type: "session_resume", payload: { id, at, resumeFromNote } },
+      {
+        projectId: session.projectId,
+        type: "session_resumed",
+        summary: `Resumed work on ${session.objective}`,
+        entityType: "session",
+        entityId: session.id,
+        metadata: resumeFromNote ?? session.resumeFromNote,
+        actor: session.source === "manual" ? "marwan" : session.source,
+        taskId: session.taskId,
+        promptRecordId: session.promptRecordId,
+        workSessionId: session.id,
+      },
+    );
+  }, [applyAction]);
+
+  const finishTaskWorkSession = useCallback((
+    id: string,
+    updates: Partial<DevelopmentSession> = {},
+    status: "completed" | "abandoned" = "completed",
+  ) => {
+    const session = dataRef.current.developmentSessions.find((entry) => entry.id === id);
+    if (!session) {
+      setLastActionError("Work session not found.");
+      return;
+    }
+    const at = nowIso();
+    void applyAction(
+      { type: "session_finish", payload: { id, at, status, updates } },
+      {
+        projectId: session.projectId,
+        type: "session_completed",
+        summary: `${status === "abandoned" ? "Stopped" : "Finished"} work on ${session.objective}`,
+        entityType: "session",
+        entityId: session.id,
+        metadata: updates.summary ?? session.summary,
+        actor: session.source === "manual" ? "marwan" : session.source,
+        taskId: session.taskId,
+        promptRecordId: session.promptRecordId,
+        workSessionId: session.id,
+      },
+    );
+  }, [applyAction]);
+
+  const correctTaskWorkSession = useCallback((id: string, activeDurationMs: number) => {
+    const session = dataRef.current.developmentSessions.find((entry) => entry.id === id);
+    if (!session || !Number.isSafeInteger(activeDurationMs) || activeDurationMs < 0) {
+      setLastActionError("Enter a valid corrected active duration.");
+      return;
+    }
+    const at = nowIso();
+    void applyAction(
+      { type: "session_correct", payload: { id, activeDurationMs, at } },
+      {
+        projectId: session.projectId,
+        type: "session_corrected",
+        summary: `Corrected active time for ${session.objective}`,
+        entityType: "session",
+        entityId: session.id,
+        metadata: "Manual time correction recorded.",
+        actor: "marwan",
+        taskId: session.taskId,
+        promptRecordId: session.promptRecordId,
+        workSessionId: session.id,
+      },
+    );
   }, [applyAction]);
 
   const runQuickCapture = useCallback(
@@ -3070,7 +3497,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             title: text,
             details: "",
             type: parsed.classification === "bug" ? "bug" : "feature",
-            status: "backlog",
+            status: "open",
             priority: "medium",
             blockedReason: "",
             sourceIdeaId: null,
@@ -3151,6 +3578,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       startTask,
       blockTask,
       completeTask,
+      setTaskStatus,
 
       addBrainDump,
       updateBrainDump,
@@ -3166,6 +3594,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
       upsertPrompt,
       markPromptUsed,
+      createTaskPromptRecord,
 
       addNote,
       updateNote,
@@ -3176,6 +3605,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       startSession,
       endSession,
       appendSessionNote,
+      startTaskWorkSession,
+      pauseTaskWorkSession,
+      resumeTaskWorkSession,
+      finishTaskWorkSession,
+      correctTaskWorkSession,
 
       search,
     }),
@@ -3204,6 +3638,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       startTask,
       blockTask,
       completeTask,
+      setTaskStatus,
       addBrainDump,
       updateBrainDump,
       deleteBrainDump,
@@ -3215,6 +3650,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       updateDecisionStatus,
       upsertPrompt,
       markPromptUsed,
+      createTaskPromptRecord,
       addNote,
       updateNote,
       addLink,
@@ -3222,6 +3658,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       startSession,
       endSession,
       appendSessionNote,
+      startTaskWorkSession,
+      pauseTaskWorkSession,
+      resumeTaskWorkSession,
+      finishTaskWorkSession,
+      correctTaskWorkSession,
       search,
     ],
   );

@@ -33,6 +33,19 @@ export type CodexSessionIngestV1 = {
     currentBlocker?: string | null;
     nextRecommendedTask?: string;
     ideas?: CodexIdeaInput[];
+    activeDurationMs?: number;
+    testResults?: string[];
+    buildResults?: string[];
+    deploymentStatus?: string;
+  };
+  workflow?: {
+    taskId: string;
+    promptRecordId: string;
+    workSessionId: string;
+    promptStatus: "completed" | "failed";
+    workSessionStatus: "completed" | "paused";
+    requestedTaskStatus?: "open" | "ready" | "in_progress" | "blocked" | "completed" | "cancelled";
+    taskCompletionAuthorized?: boolean;
   };
   source: "codex";
 };
@@ -76,6 +89,8 @@ export type CodexIngestionErrorCode =
   | "project_not_associated"
   | "project_ambiguous"
   | "selector_mismatch"
+  | "workflow_not_associated"
+  | "workflow_mismatch"
   | "idempotency_conflict"
   | "rate_limited"
   | "configuration_unavailable"
@@ -90,6 +105,8 @@ const SAFE_MESSAGES: Record<CodexIngestionErrorCode, string> = {
   project_not_associated: "The Codex session is not associated with a Dashboard project.",
   project_ambiguous: "The Codex session project identity is ambiguous.",
   selector_mismatch: "The supplied project identities do not refer to the same Dashboard project.",
+  workflow_not_associated: "The Codex report is not associated with the requested task workflow.",
+  workflow_mismatch: "The supplied task, prompt, and work-session identities do not belong to the same workflow.",
   idempotency_conflict: "This external session ID was already used with different content.",
   rate_limited: "Too many new Codex sessions were submitted. Retry later.",
   configuration_unavailable: "Codex ingestion is not configured.",

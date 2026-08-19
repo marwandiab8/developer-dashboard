@@ -63,6 +63,7 @@ const asInput = (
     schemaVersion: payload.schemaVersion,
     source: payload.source,
     session: payload.session,
+    workflow: payload.workflow,
   }),
   receivedAt,
 });
@@ -276,6 +277,102 @@ test("atomically creates one complete Codex projection and recognizes an ambiguo
   const changed = parseCodexSessionIngestV1(rawPayload({ summary: "Changed after retry" }));
   await expectCode(persistence.ingest(asInput(changed)), "idempotency_conflict");
   assert.equal(database.documents.size, countAfterFirst);
+});
+
+test("updates an exact task prompt and work session once without implicitly completing the task", async () => {
+  const database = new FakeFirestore();
+  const taskId = "77777777-7777-4777-8777-777777777777";
+  const promptId = "88888888-8888-4888-8888-888888888888";
+  const sessionId = "99999999-9999-4999-8999-999999999999";
+  database.documents.set(`users/${owner}/projects/${projectOne}`, projectRecord());
+  database.documents.set(`users/${owner}/tasks/${taskId}`, {
+    projectId: projectOne,
+    title: "Exact queued task",
+    status: "in_progress",
+    totalActiveDurationMs: 20 * 60_000,
+    promptRecordIds: [promptId],
+    workSessionIds: [sessionId],
+  });
+  database.documents.set(`users/${owner}/codexPrompts/${promptId}`, {
+    projectId: projectOne,
+    relatedTaskId: taskId,
+    relatedSessionId: sessionId,
+    status: "started",
+  });
+  database.documents.set(`users/${owner}/sessions/${sessionId}`, {
+    projectId: projectOne,
+    taskId,
+    promptRecordId: promptId,
+    tasksWorkedOn: [taskId],
+    promptsUsed: [promptId],
+    activeDurationMs: 20 * 60_000,
+  });
+  const parsed = parseCodexSessionIngestV1({
+    ...rawPayload({
+      externalSessionId: "workflow-session",
+      activeDurationMs: 45 * 60_000,
+      testResults: ["Unit tests passed"],
+      buildResults: ["Production build passed"],
+      deploymentStatus: "Not deployed",
+      ideas: [],
+    }),
+    workflow: {
+      taskId,
+      promptRecordId: promptId,
+      workSessionId: sessionId,
+      promptStatus: "completed",
+      workSessionStatus: "completed",
+    },
+  });
+  const persistence = persistenceFor(database);
+  const first = await persistence.ingest(asInput(parsed));
+  assert.equal(first.sessionId, sessionId);
+  assert.equal(first.promptId, promptId);
+  assert.equal(database.documents.get(`users/${owner}/tasks/${taskId}`)?.status, "in_progress");
+  assert.equal(database.documents.get(`users/${owner}/tasks/${taskId}`)?.totalActiveDurationMs, 45 * 60_000);
+  assert.equal(database.documents.get(`users/${owner}/sessions/${sessionId}`)?.activeDurationMs, 45 * 60_000);
+  assert.equal(database.documents.get(`users/${owner}/codexPrompts/${promptId}`)?.status, "completed");
+  assert.deepEqual(database.documents.get(`users/${owner}/codexPrompts/${promptId}`)?.testResults, ["Unit tests passed"]);
+  const countAfterFirst = database.documents.size;
+  const retry = await persistence.ingest(asInput(parsed));
+  assert.equal(retry.idempotent, true);
+  assert.equal(database.documents.get(`users/${owner}/tasks/${taskId}`)?.totalActiveDurationMs, 45 * 60_000);
+  assert.equal(database.documents.size, countAfterFirst);
+});
+
+test("rejects cross-project workflow identities before writing", async () => {
+  const database = new FakeFirestore();
+  const taskId = "77777777-7777-4777-8777-777777777778";
+  const promptId = "88888888-8888-4888-8888-888888888889";
+  const sessionId = "99999999-9999-4999-8999-999999999990";
+  database.documents.set(`users/${owner}/projects/${projectOne}`, projectRecord());
+  database.documents.set(`users/${owner}/tasks/${taskId}`, { projectId: projectTwo });
+  database.documents.set(`users/${owner}/codexPrompts/${promptId}`, {
+    projectId: projectOne, relatedTaskId: taskId,
+  });
+  database.documents.set(`users/${owner}/sessions/${sessionId}`, {
+    projectId: projectOne, taskId, promptRecordId: promptId, tasksWorkedOn: [taskId], promptsUsed: [promptId],
+  });
+  const before = clone([...database.documents.entries()]);
+  const parsed = parseCodexSessionIngestV1({
+    ...rawPayload({
+      externalSessionId: "mismatched-workflow",
+      activeDurationMs: 10,
+      testResults: [],
+      buildResults: [],
+      deploymentStatus: "Not deployed",
+      ideas: [],
+    }),
+    workflow: {
+      taskId,
+      promptRecordId: promptId,
+      workSessionId: sessionId,
+      promptStatus: "failed",
+      workSessionStatus: "paused",
+    },
+  });
+  await expectCode(persistenceFor(database).ingest(asInput(parsed)), "workflow_mismatch");
+  assert.deepEqual([...database.documents.entries()], before);
 });
 
 test("matches strongest identities, normalizes full names, and rejects unsafe association", async () => {

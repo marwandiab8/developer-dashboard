@@ -38,7 +38,7 @@ describe("local dashboard repository adapter", () => {
 describe("dashboard reducer", () => {
   it("preserves idea when converted to task", () => {
     const seed = seedDashboardData();
-    const source = seed.ideas[0];
+    const source = seed.ideas.find((idea) => idea.status === "inbox")!;
     const task = {
       id: "t-test-id",
       projectId: source.projectId,
@@ -55,6 +55,15 @@ describe("dashboard reducer", () => {
       updatedAt: new Date().toISOString(),
       startedAt: null,
       completedAt: null,
+      readyAt: new Date().toISOString(),
+      lastWorkedAt: null,
+      totalActiveDurationMs: 0,
+      promptRecordIds: [],
+      workSessionIds: [],
+      recommendedNextStep: "",
+      githubBranch: "",
+      githubCommit: "",
+      githubPullRequest: "",
     };
 
     const next = dashboardReducer(seed, {
@@ -72,6 +81,12 @@ describe("dashboard reducer", () => {
     expect(idea?.status).toBe("converted");
     expect(idea?.linkedTaskId).toBe("t-test-id");
     expect(insertedTask).toBeTruthy();
+
+    const retried = dashboardReducer(next, {
+      type: "idea_to_task",
+      payload: { ideaId: source.id, taskId: task.id, task },
+    });
+    expect(retried.tasks.filter((item) => item.id === task.id)).toHaveLength(1);
   });
 
   it("marks task complete with completedAt", () => {

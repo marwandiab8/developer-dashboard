@@ -7,12 +7,14 @@ describe("time formatting", () => {
 
     const formatted = toDisplayDate("2026-07-28T12:34:56.789Z");
 
-    expect(formatted).toBeTruthy();
+    expect(formatted).toBe("Jul 28, 2026");
 
     const [locale, options] = spy.mock.calls[0];
     expect(locale).toBe(DISPLAY_LOCALE);
     expect(options?.timeZone).toBe(DISPLAY_TIME_ZONE);
     expect(options?.year).toBe("numeric");
+    expect(options?.month).toBe("short");
+    expect(options?.day).toBe("numeric");
 
     spy.mockRestore();
   });

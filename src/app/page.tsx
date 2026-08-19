@@ -2,228 +2,198 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import { GitHubProjectMetadata } from "../components/GitHubProjectMetadata";
+import type { Task } from "../lib/models";
+import {
+  getMeaningfulActivities,
+  getProjectDisplayStatus,
+  getProjectFocus,
+  hasActualBlocker,
+  sortProjectsByRecency,
+  type ProjectDisplayStatus,
+} from "../lib/presentation";
 import { useDashboard } from "../lib/repositories/repositoryContext";
 import { toDisplayDate } from "../lib/utils/time";
+import {
+  buildTaskQueue,
+  calculateTaskActiveDuration,
+  formatActiveDuration,
+  normalizeIdeaStatus,
+  normalizeTaskStatus,
+} from "../lib/workflow";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="mt-3 text-sm text-slate-700">{children}</div>
-    </section>
-  );
+function ProjectStatus({ status }: { status: ProjectDisplayStatus }) {
+  const tone = status === "Blocked"
+    ? "border-rose-200 bg-rose-50 text-rose-700"
+    : status === "Paused"
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
+}
+
+function TaskStatus({ task }: { task: Task }) {
+  const status = normalizeTaskStatus(task.status);
+  const label = status.replace("_", " ");
+  const tone = status === "blocked"
+    ? "bg-rose-100 text-rose-800"
+    : status === "in_progress"
+      ? "bg-blue-100 text-blue-800"
+      : status === "ready"
+        ? "bg-emerald-100 text-emerald-800"
+        : "bg-slate-100 text-slate-700";
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${tone}`}>{label}</span>;
 }
 
 export default function DashboardPage() {
   const { data } = useDashboard();
-
-  const activeProjects = data.projects.filter((project) => project.status === "active");
-  const recentlyUpdated = useMemo(
-    () =>
-      [...data.projects]
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-        .slice(0, 6),
-    [data.projects],
+  const projects = useMemo(() => sortProjectsByRecency(data.projects), [data.projects]);
+  const projectsById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
   );
-  const unreviewedIdeas = data.ideas.filter((idea) => idea.status === "inbox" || idea.status === "reviewed");
-  const currentTasks = useMemo(
-    () => data.tasks.filter((task) => ["backlog", "ready", "in_progress"].includes(task.status)),
+  const tasksByProject = useMemo(() => {
+    const grouped = new Map<string, Task[]>();
+    data.tasks.forEach((task) => grouped.set(task.projectId, [...(grouped.get(task.projectId) ?? []), task]));
+    return grouped;
+  }, [data.tasks]);
+  const queue = useMemo(
+    () => buildTaskQueue(data.tasks).filter((task) => !["completed", "cancelled"].includes(normalizeTaskStatus(task.status))),
     [data.tasks],
   );
-  const recentSessions = useMemo(
-    () =>
-      [...data.developmentSessions]
-        .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-        .slice(0, 6),
-    [data.developmentSessions],
+  const currentTask = queue[0];
+  const currentProject = currentTask ? projectsById.get(currentTask.projectId) : projects[0];
+  const pendingIdeas = useMemo(
+    () => data.ideas.filter((idea) => ["inbox", "ready_for_review"].includes(normalizeIdeaStatus(idea.status))),
+    [data.ideas],
   );
+  const recentProgress = useMemo(
+    () => getMeaningfulActivities(data.activities)
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .slice(0, 5),
+    [data.activities],
+  );
+  const currentHref = currentTask && currentProject
+    ? `/projects/${currentProject.id}/tasks/${currentTask.id}`
+    : currentProject
+      ? `/projects/${currentProject.id}`
+      : "/projects";
+  const currentBlocker = currentTask?.blockedReason || currentProject?.currentBlocker || "";
 
-  const continueWork = useMemo(() => {
-    return data.projects
-      .map((project) => {
-        const inProgress = data.tasks.find((task) => task.projectId === project.id && task.status === "in_progress");
-        const lastIdea = [...data.ideas]
-          .filter((idea) => idea.projectId === project.id)
-          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-        const score = (inProgress ? 2 : 0) + (project.lastWorkedAt ? 1 : 0) + (lastIdea ? 1 : 0);
-        return { project, score, inProgress, lastIdea };
-      })
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6);
-  }, [data.ideas, data.projects, data.tasks]);
-
-  const highlighted = useMemo(() => continueWork.find((entry) => entry.project.status === "active") || continueWork[0], [continueWork]);
   return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-slate-900 p-4 text-white sm:p-6">
-        <p className="text-sm uppercase tracking-wide text-slate-300">Current focus</p>
-        {highlighted ? (
-          <div className="mt-2">
-            <p className="text-2xl font-semibold">{highlighted.project.title}</p>
-            <p className="mt-1 text-sm text-slate-200">
-              Objective: {highlighted.project.currentObjective || "Not set yet"}
-            </p>
-            <p className="text-sm text-slate-200">
-              In-progress task: {highlighted.inProgress?.title || "No active task"}
-            </p>
-            <p className="text-sm text-slate-300">Last worked: {toDisplayDate(highlighted.project.lastWorkedAt)}</p>
+    <div className="space-y-10">
+      <header>
+        <p className="text-sm font-semibold text-blue-700">Your development workspace</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+          What are you working on?
+        </h1>
+      </header>
+
+      {currentProject ? (
+        <section aria-labelledby="continue-current-task" className="overflow-hidden rounded-3xl bg-slate-950 px-5 py-6 text-white shadow-lg shadow-slate-200 sm:px-8 sm:py-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-200">Continue current task</p>
+            {currentTask ? <TaskStatus task={currentTask} /> : <ProjectStatus status={getProjectDisplayStatus(currentProject, tasksByProject.get(currentProject.id) ?? [])} />}
           </div>
-        ) : (
-          <p className="mt-2 text-slate-200">No recent work yet. Capture a new idea to begin.</p>
-        )}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Link
-            href="?quickCapture=1"
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-          >
-            Quick Capture
-          </Link>
-          <Link
-            href="/projects"
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-white/40 px-3 py-2 text-sm font-medium text-white"
-          >
-            Open Projects
-          </Link>
-          <Link
-            href="/search"
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-white/40 px-3 py-2 text-sm font-medium text-white"
-          >
-            Search
-          </Link>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4">
-        <h2 className="text-lg font-semibold">Continue Where I Left Off</h2>
-        {continueWork.length > 0 ? (
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {continueWork.map(({ project, inProgress, lastIdea }) => (
-              <article key={project.id} className="rounded-xl border border-slate-200 p-3">
-                <h3 className="font-semibold">{project.title}</h3>
-                <GitHubProjectMetadata project={project} compact />
-                <p className="mt-1 text-sm text-slate-600">
-                  Last worked: {toDisplayDate(project.lastWorkedAt)}
-                </p>
-                <p className="text-sm">Current objective: {project.currentObjective || "Not set"}</p>
-                <p className="text-sm">Current task: {inProgress?.title || "No active task"}</p>
-                <p className="text-sm">Last idea: {lastIdea?.text || "none"}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Link className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white" href={`/projects/${project.id}?section=workbench`}>
-                    Open Workbench
-                  </Link>
-                  <Link className="rounded-md border border-slate-300 px-3 py-2 text-sm" href={`/projects/${project.id}?quickCapture=1`}>
-                    Quick Capture
-                  </Link>
-                </div>
-              </article>
-            ))}
+          <p className="mt-4 text-sm font-medium text-slate-300">{currentProject.title}</p>
+          <h2 id="continue-current-task" className="mt-1 max-w-3xl text-2xl font-semibold leading-tight sm:text-3xl">
+            {currentTask?.title || currentProject.currentObjective || currentProject.nextRecommendedTask || "Choose the next useful task"}
+          </h2>
+          {currentTask?.recommendedNextStep ? (
+            <p className="mt-3 max-w-3xl text-base leading-7 text-slate-200">Next: {currentTask.recommendedNextStep}</p>
+          ) : null}
+          {hasActualBlocker(currentBlocker) ? (
+            <div className="mt-5 rounded-2xl border border-rose-400/40 bg-rose-400/10 px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-rose-200">Blocker</p>
+              <p className="mt-1 text-sm leading-6 text-rose-50">{currentBlocker}</p>
+            </div>
+          ) : null}
+          <div className="mt-5 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-300">
+            <span>Last worked {toDisplayDate(currentTask?.lastWorkedAt || currentProject.lastWorkedAt || currentProject.updatedAt)}</span>
+            {currentTask ? <span>{formatActiveDuration(calculateTaskActiveDuration(data.developmentSessions, currentTask.id))} active time</span> : null}
           </div>
-        ) : (
-          <p className="mt-3 text-sm text-slate-600">No active resume data yet.</p>
-        )}
-      </section>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link href={currentHref} className="dd-btn bg-white text-slate-950 hover:bg-slate-100">Continue current task</Link>
+            <Link href={`/?quickCapture=1&qcProject=${currentProject.id}`} className="dd-btn border-white/30 bg-transparent text-white hover:bg-white/10">Add a thought</Link>
+          </div>
+        </section>
+      ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Section title="Quick capture status">
-          <p>All projects: {data.projects.length}</p>
-          <p>Unreviewed ideas: {unreviewedIdeas.length}</p>
-          <p>Open tasks: {currentTasks.length}</p>
-          <p>Recent sessions: {recentSessions.length}</p>
-        </Section>
-
-        <Section title="Recent ideas (preview)">
-          <ul className="space-y-2">
-            {unreviewedIdeas.slice(0, 8).map((idea) => (
-              <li key={idea.id} className="rounded-lg border border-slate-200 p-2">
-                <p className="font-medium">{idea.text}</p>
-                <p className="text-xs text-slate-500">{idea.status} • {idea.priority}</p>
-              </li>
-            ))}
-            {!unreviewedIdeas.length && <li className="text-slate-500">Capture a thought and ideas will appear here.</li>}
-          </ul>
-        </Section>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Section title="Active projects">
-          {activeProjects.length ? (
-            <ul className="space-y-2">
-              {activeProjects.map((project) => (
-                <li key={project.id} className="flex justify-between gap-2">
-                  <Link href={`/projects/${project.id}`} className="font-medium text-slate-900">
-                    {project.title}
-                  </Link>
-                  <span className="text-xs text-slate-500">{project.status}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No active projects.</p>
-          )}
-        </Section>
-
-        <Section title="Current sessions">
-          {recentSessions.length ? (
-            <ul className="space-y-2">
-              {recentSessions.map((session) => (
-                <li key={session.id} className="rounded-lg border border-slate-200 p-2">
-                  <p className="font-medium">{session.objective}</p>
-                  <p className="text-xs text-slate-500">
-                    {session.status} • started {toDisplayDate(session.startedAt)}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No recent sessions.</p>
-          )}
-        </Section>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <Section title="Recently updated projects">
-          <ul className="space-y-2">
-            {recentlyUpdated.map((project) => (
-              <li key={project.id} className="flex justify-between gap-2">
-                <Link href={`/projects/${project.id}`} className="text-slate-900 hover:underline">
-                  {project.title}
+      {queue.length > 0 ? (
+        <section aria-labelledby="task-queue-heading">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h2 id="task-queue-heading" className="text-2xl font-semibold tracking-tight text-slate-950">Task queue</h2>
+              <p className="mt-1 text-sm text-slate-500">In progress first, then blocked, ready, and open.</p>
+            </div>
+            <Link href="/tasks" className="text-sm font-semibold text-blue-700 hover:underline">View queue</Link>
+          </div>
+          <div className="mt-5 divide-y divide-slate-200 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            {queue.slice(0, 5).map((task) => {
+              const project = projectsById.get(task.projectId);
+              return (
+                <Link key={task.id} href={`/projects/${task.projectId}/tasks/${task.id}`} className="flex min-w-0 items-start justify-between gap-4 p-4 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 sm:p-5">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-500">{project?.title || "Project"}</p>
+                    <h3 className="mt-1 truncate font-semibold text-slate-950">{task.title}</h3>
+                    {task.recommendedNextStep ? <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">{task.recommendedNextStep}</p> : null}
+                  </div>
+                  <TaskStatus task={task} />
                 </Link>
-                <span className="text-xs text-slate-500">{toDisplayDate(project.updatedAt)}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
-        <Section title="All projects">
-          <ul className="space-y-2">
-            {data.projects.map((project) => (
-              <li key={project.id} className="flex justify-between gap-2">
-                <Link href={`/projects/${project.id}`} className="text-slate-900 hover:underline">
-                  {project.title}
+      {pendingIdeas.length > 0 ? (
+        <aside className="flex flex-col gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold text-blue-950">Ideas waiting for review</h2>
+            <p className="mt-1 text-sm text-blue-800">{pendingIdeas.length} {pendingIdeas.length === 1 ? "idea is" : "ideas are"} ready for your decision.</p>
+          </div>
+          <Link href="/ideas" className="text-sm font-semibold text-blue-800 hover:underline">Review ideas</Link>
+        </aside>
+      ) : null}
+
+      {projects.length > 0 ? (
+        <section aria-labelledby="recent-projects-heading">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h2 id="recent-projects-heading" className="text-2xl font-semibold tracking-tight text-slate-950">Recently worked projects</h2>
+              <p className="mt-1 text-sm text-slate-500">Your most recent project context.</p>
+            </div>
+            <Link href="/projects" className="text-sm font-semibold text-blue-700 hover:underline">View all</Link>
+          </div>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {projects.slice(0, 4).map((project) => {
+              const tasks = tasksByProject.get(project.id) ?? [];
+              return (
+                <Link key={project.id} href={`/projects/${project.id}`} className="group min-w-0 rounded-2xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="min-w-0 truncate text-lg font-semibold text-slate-950 group-hover:text-blue-700">{project.title}</h3>
+                    <ProjectStatus status={getProjectDisplayStatus(project, tasks)} />
+                  </div>
+                  <p className="mt-4 line-clamp-2 text-sm leading-6 text-slate-700">{getProjectFocus(project, tasks)}</p>
+                  <p className="mt-4 text-xs font-medium text-slate-500">Last worked {toDisplayDate(project.lastWorkedAt || project.updatedAt)}</p>
                 </Link>
-                <span className="text-xs uppercase text-slate-500">{project.status}</span>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {recentProgress.length > 0 ? (
+        <section aria-labelledby="recent-progress-heading" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+          <h2 id="recent-progress-heading" className="text-xl font-semibold text-slate-950">Recent meaningful progress</h2>
+          <ul className="mt-4 space-y-4">
+            {recentProgress.map((event) => (
+              <li key={event.id} className="border-l-2 border-blue-500 pl-4">
+                <p className="line-clamp-3 text-sm leading-6 text-slate-800">{event.summary}</p>
+                <p className="mt-1 text-xs text-slate-500">{toDisplayDate(event.createdAt)}</p>
               </li>
             ))}
           </ul>
-        </Section>
-
-        <Section title="Current tasks">
-          {currentTasks.length ? (
-            <ul className="space-y-2">
-              {currentTasks.slice(0, 8).map((task) => (
-                <li key={task.id} className="rounded-lg border border-slate-200 p-2">
-                  <p className="font-medium">{task.title}</p>
-                  <p className="text-xs text-slate-500">{task.status} • {task.type} • {task.priority}</p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No open tasks.</p>
-          )}
-        </Section>
-      </div>
+        </section>
+      ) : null}
     </div>
   );
 }
