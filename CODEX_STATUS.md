@@ -4,13 +4,27 @@ Current record date: 2026-08-19
 
 This is the sole current operational and release-status record. `CODEX-STATUS.md` is an obsolete pointer only.
 
-## Local shared-workflow candidate — not deployed
+## Version 2 production release — OAuth connection pending
 
-- The current dirty working tree contains the schema version 2 shared Idea → Task → ChatGPT prompt → Codex work-session workflow, task/project timelines and active-time totals, task detail route, simplified navigation/dashboard/project surfaces, and an OAuth-protected bounded MCP resource server.
-- Existing local-first storage, Firebase Authentication, UID-scoped Firestore, rules, GitHub synchronization ownership, routes, and Codex ingestion are extended rather than replaced. The local migration preserves legacy status values and document IDs.
-- The MCP implementation is not connected to ChatGPT. No OAuth provider/client was configured, no secret was created, no Function/rules/frontend was deployed, and no authenticated live MCP tool call has occurred.
-- Production migration remains prohibited until explicit approval. The migration and rollback plan is `docs/MIGRATION_V2.md`; OAuth setup and the connection gate are `docs/CHATGPT_MCP.md`.
-- Local verification is complete and recorded below. The only visible local warning is the expected Firebase-configuration banner because this preview intentionally has no Firebase environment values; local mode remains usable.
+- Release commit `066a7228d9ff0b92e3ed74d26039fadba4b6bd96` (`feat: add shared idea-to-Codex workflow`) is on local `main` and `origin/main`. It contains the schema version 2 shared Idea → Task → ChatGPT prompt → Codex work-session workflow, task/project timelines and active-time totals, task detail route, simplified interface, and bounded OAuth-protected MCP resource-server implementation.
+- Existing local-first storage, Firebase Authentication, UID-scoped Firestore, rules, GitHub synchronization ownership, routes, and Codex ingestion were extended rather than replaced. GitHub remains additive and cannot overwrite Dashboard-owned workflow history.
+- Firestore rules, the App Hosting frontend, and `ingestCodexSession` are deployed to the existing `marwan-developer-dashboard` project. The public Dashboard URL is `https://developer-dashboard--marwan-developer-dashboard.us-east4.hosted.app`.
+- `dashboardMcp` is not deployed and ChatGPT is not connected. No compatible OAuth issuer/client or owner subject is configured, so no authenticated ChatGPT MCP tool call has occurred. The remaining provider and connection gate is documented in `docs/CHATGPT_MCP.md`.
+- No bulk or destructive production-data migration ran. Version 1 records remain readable through backward-compatible hydration and the idempotent version 2 migration; no legacy record, collection, or ID was deleted or rewritten.
+- The pre-existing untracked `remoteconfig.template.json` remains untracked and was not included in the release.
+
+## Version 2 production release evidence — 2026-08-19
+
+- Root validation: lint passed with no warnings; typecheck passed; 24 test files passed with 272 tests passed and 8 skipped; all 8 Firestore emulator tests passed; the production build generated all 9 routes; and `git diff --check` passed.
+- Functions validation: lint, typecheck, all 8 compiled test suites, and the standalone build passed.
+- Firestore rules compiled and deployed successfully. No composite-index change was required, so indexes were not deployed.
+- App Hosting backend `developer-dashboard` completed its rollout and reports `reconciling: false` on Node.js 24.
+- `ingestCodexSession` is ACTIVE in `us-east4`, bound only to `CODEX_INGEST_TOKEN` version 2 and `DASHBOARD_OWNER_UID` version 1. Its stable Firebase URL is `https://us-east4-marwan-developer-dashboard.cloudfunctions.net/ingestCodexSession`.
+- A release diagnostic inadvertently displayed the owner-local version 1 ingestion credential. It was immediately replaced, the owner-only configuration was updated without displaying the replacement, the Function was rebound to version 2, and compromised version 1 was destroyed. The version 2 read-only association check succeeds; an unauthenticated request returns sanitized HTTP 401 with `Cache-Control: no-store`.
+- The read-only production helper exactly associated `marwandiab8/developer-dashboard` with Dashboard project `098326b5-ef68-4d50-a458-e20b7950cd8f`. No project was fuzzy-matched or created and no production workflow record was written.
+- Live browser checks passed for desktop Home, Projects, Ideas, Tasks, Project Overview, Project Timeline, and Task Detail plus mobile Home and Project Overview. There were zero application console errors, runtime exceptions, failed application responses, blocking overlays, raw internal event names, duplicate global menus, or horizontal overflow. The Firebase-configuration warning was absent.
+- The production Google sign-in button successfully reached the Google Accounts authorization handoff. Completing owner sign-in still requires the owner's interactive Google consent; no GitHub synchronization or repository import was triggered.
+- No temporary production test records were created. Exact relationship, idempotency, paused-time exclusion, duplicate-duration protection, and explicit-completion behavior were verified by the local Functions integration suites rather than by ingesting a real production task.
 
 ## Local shared-workflow validation — 2026-08-19
 
@@ -32,6 +46,7 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 ## Current working-tree status
 
 - Confirmed branch: `main`.
+- Version 2 release commit `066a7228d9ff0b92e3ed74d26039fadba4b6bd96` is pushed to `origin/main`. The pre-existing `remoteconfig.template.json` remains intentionally untracked.
 - Automatic Codex session ingestion release commit `b302e8dd4dd80d2f5b35ddc52ff3fcf669ff5c96` (`feat: add automatic Codex session ingestion`) is on local `main` and `origin/main`. It follows project-route hotfix `75e519d706e1ee54f87dd5ced5767342096cb699` and validated Firebase/GitHub release commit `04c02a6a572ae728dfdbc39f9ae651db6ca1a62d`.
 - The automatic Codex session ingestion Function, backend-only Firestore rules, and App Hosting frontend are deployed to `marwan-developer-dashboard`. The exact production evidence is recorded below.
 - Firebase Authentication, UID-scoped Firestore persistence, signed-out local mode, safe local migration, App Hosting, and owner-only GitHub synchronization remain part of the released baseline.
@@ -39,7 +54,7 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 - Remediation Pass 3 hardens account-scoped recovery isolation, UID-switch and stale-auth guards, revision-aware import/keep-cloud decisions, invocation-ordered cloud replay, deferred realtime snapshots during dependent queued actions, Firestore parent-recency consistency, GitHub synchronization transaction conflicts, and concurrent rate-limit metadata merging.
 - Remediation Pass 4 resolves the seven final-review P2 blocker groups listed below, plus the focused authenticated-UID reset and manual `currentBranch` ownership regressions.
 - Remediation Pass 5 resolves the four confirmed final blockers listed below: atomic local payload/revision durability, pending-mutation recovery projection, observable Quick Capture acceptance, and fatal GitHub enrichment rate exhaustion.
-- `CODEX_INGEST_TOKEN` version 1 is enabled in Secret Manager. Only metadata was displayed; the value was passed transiently to the helper and was never printed, logged, stored in Git, or written to an application data record.
+- `CODEX_INGEST_TOKEN` version 2 is enabled and bound to `ingestCodexSession`; compromised version 1 is destroyed. No ingestion credential is stored in Git, Firestore, browser storage, a URL, or a command argument.
 - Live endpoint checks and one synthetic transaction verify authenticated creation followed by an idempotent duplicate response. An independent production Firestore count was intentionally not attempted because the available CLI has no safe query command and no separately authenticated read-only Firestore client; authenticated UI confirmation of the visible cards remains a manual acceptance check.
 - Automated repository, rules, and ordering tests are not physical cross-device validation.
 
