@@ -1,15 +1,16 @@
 # CODEX_STATUS
 
-Current record date: 2026-08-19
+Current record date: 2026-08-20
 
 This is the sole current operational and release-status record. `CODEX-STATUS.md` is an obsolete pointer only.
 
-## Version 2 production release — OAuth connection pending
+## Version 2 production release — deployed and ChatGPT connected
 
 - Release commit `066a7228d9ff0b92e3ed74d26039fadba4b6bd96` (`feat: add shared idea-to-Codex workflow`) is on local `main` and `origin/main`. It contains the schema version 2 shared Idea → Task → ChatGPT prompt → Codex work-session workflow, task/project timelines and active-time totals, task detail route, simplified interface, and bounded OAuth-protected MCP resource-server implementation.
 - Existing local-first storage, Firebase Authentication, UID-scoped Firestore, rules, GitHub synchronization ownership, routes, and Codex ingestion were extended rather than replaced. GitHub remains additive and cannot overwrite Dashboard-owned workflow history.
 - Firestore rules, the App Hosting frontend, and `ingestCodexSession` are deployed to the existing `marwan-developer-dashboard` project. The public Dashboard URL is `https://developer-dashboard--marwan-developer-dashboard.us-east4.hosted.app`.
-- `dashboardMcp` is deployed with the configured Auth0 issuer, audience, JWKS, resource URL, and exact server-side owner subject. ChatGPT is not connected and no authenticated ChatGPT MCP tool call has occurred because the registered ChatGPT third-party client still requires an explicit Auth0 user-delegated client grant for this API. The remaining connection gate is documented in `docs/CHATGPT_MCP.md`.
+- `dashboardMcp` is deployed with the configured Auth0 issuer, audience, JWKS, resource URL, and exact server-side owner subject. The exact ChatGPT CIMD client is registered as a third-party Auth0 application. Its database connection is available at the domain level as Auth0 requires for third-party clients, its user-delegated Dashboard API grant contains only `dashboard:read` and `dashboard:write`, and its client-credential grant remains at zero permissions.
+- ChatGPT connected through the real OAuth flow on 2026-08-20. A production chat then invoked `mcp__codex_apps__developer_dashboard_list_projects` with a bounded limit of 5 and returned five owner projects. The result included exact Dashboard project `098326b5-ef68-4d50-a458-e20b7950cd8f` named `developer-dashboard`. This is a real authenticated ChatGPT MCP read, not metadata loading, a local test, or a separately generated token.
 - No bulk or destructive production-data migration ran. Version 1 records remain readable through backward-compatible hydration and the idempotent version 2 migration; no legacy record, collection, or ID was deleted or rewritten.
 - The pre-existing untracked `remoteconfig.template.json` remains untracked and was not included in the release.
 
@@ -26,14 +27,17 @@ This is the sole current operational and release-status record. `CODEX-STATUS.md
 - The production Google sign-in button successfully reached the Google Accounts authorization handoff. Completing owner sign-in still requires the owner's interactive Google consent; no GitHub synchronization or repository import was triggered.
 - No temporary production test records were created. Exact relationship, idempotency, paused-time exclusion, duplicate-duration protection, and explicit-completion behavior were verified by the local Functions integration suites rather than by ingesting a real production task.
 
-## MCP production deployment evidence — 2026-08-19
+## MCP production deployment evidence — 2026-08-20
 
 - `dashboardMcp` deployed successfully as an ACTIVE Node.js 24 v2 HTTPS Function in `us-east4` at `https://us-east4-marwan-developer-dashboard.cloudfunctions.net/dashboardMcp`.
 - Firebase binds only `DASHBOARD_OWNER_UID` and `MCP_OWNER_SUBJECT` as Function secrets. The four reviewed non-secret parameters are `MCP_OAUTH_ISSUER`, `MCP_OAUTH_AUDIENCE`, `MCP_OAUTH_JWKS_URI`, and `MCP_RESOURCE_URL`; none is exposed to browser code.
 - Protected-resource metadata returns HTTP 200 with `Cache-Control: no-store`, the exact Dashboard MCP resource identifier, the exact Auth0 issuer, and only `dashboard:read` plus `dashboard:write` scopes.
 - An unauthenticated MCP initialize request returns sanitized HTTP 401 with `Cache-Control: no-store` and the required `WWW-Authenticate` protected-resource metadata challenge.
 - Auth0 public discovery publishes the exact trailing-slash issuer, remote JWKS, authorization/token/registration endpoints, PKCE `S256`, DCR, CIMD, and public-client token authentication support.
-- A no-login authorization preflight confirmed that the imported ChatGPT client is registered, but Auth0 correctly denied the Dashboard audience because the third-party client does not yet have an explicit user-delegated client grant. No token was issued and no Dashboard request or data write occurred.
+- Auth0 accepted the exact ChatGPT CIMD client, callback, remote JWKS, `private_key_jwt` client authentication, and authorization-code/refresh-token grant metadata. Tenant-wide open dynamic registration remains disabled.
+- The Auth0 API policy grants this client user-delegated access to only `dashboard:read` and `dashboard:write`; client access remains ungranted. The Dashboard database connection was promoted to Auth0's domain level so the third-party ChatGPT client can authenticate.
+- ChatGPT reports the private Developer Dashboard plugin as connected with OAuth authorization used. The authenticated production acceptance call was `mcp__codex_apps__developer_dashboard_list_projects` with `{ "limit": 5 }`. It returned only stable project IDs and names for the configured owner, including the exact `developer-dashboard` project identity above.
+- The acceptance test was read-only. It created no Dashboard workflow record, changed no task status, and did not exercise a write tool. Write auditing, confirmation, idempotency, scope rejection, invalid-audience rejection, and invalid-owner-subject rejection remain covered by the passing Functions test suites; unauthenticated production access remains denied as recorded above.
 
 ## Local shared-workflow validation — 2026-08-19
 
