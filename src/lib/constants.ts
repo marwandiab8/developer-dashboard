@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 1;
 export const STORAGE_KEY = "developer-dashboard:data:v1";
 export const QUICK_CAPTURE_PREFERENCES_KEY = "developer-dashboard:quick-capture:v1";
 export const QUICK_CAPTURE_RECENT_LIMIT = 5;
@@ -18,7 +18,6 @@ export const PROJECT_SECTIONS = [
   "workbench",
   "ideas",
   "tasks",
-  "timeline",
   "brain-dump",
   "scratchpad",
   "sessions",
