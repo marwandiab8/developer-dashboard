@@ -10,11 +10,31 @@ export const toDisplayDate = (value?: string): string => {
     if (Number.isNaN(valueDate.getTime())) return "Unknown";
     return new Intl.DateTimeFormat(DISPLAY_LOCALE, {
       year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZone: DISPLAY_TIME_ZONE,
+    }).format(valueDate);
+  } catch {
+    return "Unknown";
+  }
+};
+
+export const toShortDisplayDate = (value?: string): string => {
+  if (!value) return "Not yet";
+  try {
+    const valueDate = new Date(value);
+    if (Number.isNaN(valueDate.getTime())) return "Not yet";
+    return new Intl.DateTimeFormat(DISPLAY_LOCALE, {
+      year: "numeric",
       month: "short",
       day: "numeric",
       timeZone: DISPLAY_TIME_ZONE,
     }).format(valueDate);
   } catch {
-    return "Unknown";
+    return "Not yet";
   }
 };
