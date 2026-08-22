@@ -2,7 +2,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { User } from "firebase/auth";
-import { signInWithPopup, signOut as signOutAuth } from "firebase/auth";
+import { setPersistence, signInWithPopup, signOut as signOutAuth } from "firebase/auth";
 
 const fixtures = vi.hoisted(() => ({
   auth: {
@@ -106,8 +106,45 @@ describe("AuthProvider profile synchronization isolation", () => {
     fixtures.upsertUserDocument.mockResolvedValue(undefined);
     vi.mocked(signInWithPopup).mockReset();
     vi.mocked(signInWithPopup).mockResolvedValue(undefined as never);
+    vi.mocked(setPersistence).mockClear();
     vi.mocked(signOutAuth).mockReset();
     vi.mocked(signOutAuth).mockResolvedValue(undefined);
+  });
+
+  it("uses popup sign-in after enabling durable auth persistence", async () => {
+    const mounted = await mountProvider();
+
+    try {
+      await act(async () => {
+        await mounted.contextRef.current!.signInWithGoogle();
+      });
+
+      expect(setPersistence).toHaveBeenCalledWith(fixtures.auth, expect.anything());
+      expect(signInWithPopup).toHaveBeenCalledWith(fixtures.auth, expect.anything());
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it("surfaces a blocked popup instead of silently falling back to a broken redirect", async () => {
+    vi.mocked(signInWithPopup).mockRejectedValue({
+      code: "auth/popup-blocked",
+      message: "Popup blocked",
+    });
+    const mounted = await mountProvider();
+
+    try {
+      await act(async () => {
+        await mounted.contextRef.current!.signInWithGoogle();
+      });
+
+      expect(mounted.contextRef.current).toMatchObject({
+        status: "unauthenticated",
+        lastError: "Google sign-in was blocked. Allow pop-ups for this site, then try again.",
+      });
+    } finally {
+      mounted.unmount();
+    }
   });
 
   it("does not block authenticated state while an offline profile write is pending", async () => {
