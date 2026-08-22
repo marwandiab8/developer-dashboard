@@ -3,40 +3,20 @@
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import { GitHubSyncPanel } from "../../components/GitHubSyncPanel";
-import type { Task } from "../../lib/models";
-import {
-  getProjectDisplayStatus,
-  getProjectFocus,
-  sortProjectsByRecency,
-  type ProjectDisplayStatus,
-} from "../../lib/presentation";
 import { useDashboard } from "../../lib/repositories/repositoryContext";
-import { toDisplayDate } from "../../lib/utils/time";
-
-function StatusBadge({ status }: { status: ProjectDisplayStatus }) {
-  const tone = status === "Blocked"
-    ? "border-rose-200 bg-rose-50 text-rose-700"
-    : status === "Paused"
-      ? "border-amber-200 bg-amber-50 text-amber-700"
-      : "border-emerald-200 bg-emerald-50 text-emerald-700";
-
-  return <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
-}
+import { toShortDisplayDate } from "../../lib/utils/time";
 
 export default function ProjectsPage() {
   const { data, createProject } = useDashboard();
   const [title, setTitle] = useState("");
   const [purpose, setPurpose] = useState("");
-  const projects = useMemo(() => sortProjectsByRecency(data.projects), [data.projects]);
-  const tasksByProject = useMemo(() => {
-    const grouped = new Map<string, Task[]>();
-    for (const task of data.tasks) {
-      const tasks = grouped.get(task.projectId) ?? [];
-      tasks.push(task);
-      grouped.set(task.projectId, tasks);
-    }
-    return grouped;
-  }, [data.tasks]);
+
+  const projects = useMemo(
+    () => [...data.projects].sort((a, b) =>
+      new Date(b.lastWorkedAt || b.updatedAt).getTime()
+      - new Date(a.lastWorkedAt || a.updatedAt).getTime()),
+    [data.projects],
+  );
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -47,87 +27,98 @@ export default function ProjectsPage() {
   };
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-blue-700">Project library</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Projects</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Pick up the most important work without losing the context behind it.
-          </p>
+          <Link href="/" className="text-sm font-semibold text-slate-500 hover:text-slate-900">← Home</Link>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">Projects</h1>
+          <p className="mt-1 text-slate-600">Choose a project. The most recently worked projects are first.</p>
         </div>
 
-        <details className="group relative w-full sm:w-auto">
-          <summary className="dd-btn dd-btn--primary w-full cursor-pointer list-none sm:w-auto">
-            Create project
+        <details className="group relative">
+          <summary className="dd-btn dd-btn--primary cursor-pointer list-none marker:content-none">
+            + New project
           </summary>
           <form
             onSubmit={onSubmit}
-            className="mt-3 grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-lg sm:absolute sm:right-0 sm:z-20 sm:w-[32rem]"
+            className="absolute right-0 z-20 mt-2 grid w-[min(28rem,calc(100vw-2rem))] gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
           >
-            <h2 className="text-lg font-semibold text-slate-950">Create a project</h2>
+            <h2 className="font-bold text-slate-950">Add a project</h2>
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Name</span>
+              <span className="text-sm font-medium">Name</span>
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 className="dd-input mt-1"
-                autoComplete="off"
+                placeholder="Example: Time Left To Live"
                 required
               />
             </label>
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Short purpose</span>
+              <span className="text-sm font-medium">What is it for?</span>
               <textarea
                 value={purpose}
                 onChange={(event) => setPurpose(event.target.value)}
                 className="dd-input mt-1 min-h-24"
+                placeholder="One clear sentence"
                 required
               />
             </label>
-            <button type="submit" className="dd-btn dd-btn--primary justify-self-start">
-              Save project
-            </button>
+            <button type="submit" className="dd-btn dd-btn--primary">Create project</button>
           </form>
         </details>
       </header>
 
-      {projects.length > 0 ? (
-        <section aria-label="Project list" className="grid gap-4 md:grid-cols-2">
-          {projects.map((project) => {
-            const tasks = tasksByProject.get(project.id) ?? [];
-            const status = getProjectDisplayStatus(project, tasks);
+      <section className="grid gap-3">
+        {projects.map((project) => {
+          const openTask = data.tasks.find((task) =>
+            task.projectId === project.id && task.status === "in_progress",
+          );
+          const next = openTask?.title
+            || project.currentObjective
+            || project.nextRecommendedTask
+            || "No next step saved yet";
+          const blocked = project.currentBlocker && !/^(none|none\.)$/i.test(project.currentBlocker.trim());
+          const paused = project.manualStatus === "paused" || project.status === "on_hold";
 
-            return (
-              <Link
-                key={project.id}
-                href={`/projects/${project.id}`}
-                className="group rounded-2xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-xl font-semibold text-slate-950 group-hover:text-blue-700">
-                    {project.title}
-                  </h2>
-                  <StatusBadge status={status} />
+          return (
+            <Link
+              key={project.id}
+              href={`/projects/${project.id}`}
+              className="group grid gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow-md sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-bold text-slate-950 group-hover:text-emerald-700">{project.title}</h2>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    paused
+                      ? "bg-amber-50 text-amber-700"
+                      : blocked
+                      ? "bg-rose-50 text-rose-700"
+                      : project.status === "active"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : "bg-slate-100 text-slate-600"
+                  }`}>
+                    {paused ? "Paused" : blocked ? "Blocked" : project.status}
+                  </span>
                 </div>
-                <p className="mt-4 line-clamp-2 text-sm font-medium leading-6 text-slate-800">
-                  {getProjectFocus(project, tasks)}
-                </p>
-                <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{project.purpose}</p>
-                <p className="mt-5 text-xs font-medium text-slate-500">
-                  Last worked {toDisplayDate(project.lastWorkedAt || project.updatedAt)}
-                </p>
-              </Link>
-            );
-          })}
-        </section>
-      ) : null}
+                <p className="mt-2 text-sm font-medium text-slate-800">{next}</p>
+                {project.purpose ? <p className="mt-1 line-clamp-1 text-sm text-slate-500">{project.purpose}</p> : null}
+              </div>
+              <div className="flex items-center gap-3 text-sm text-slate-500 sm:text-right">
+                <span>Last worked<br className="hidden sm:block" /> {toShortDisplayDate(project.lastWorkedAt)}</span>
+                <span className="text-xl text-slate-400" aria-hidden="true">→</span>
+              </div>
+            </Link>
+          );
+        })}
+      </section>
 
-      <details className="rounded-2xl border border-slate-200 bg-slate-50">
-        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-          Advanced options
+      <details className="rounded-2xl border border-slate-200 bg-white">
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-slate-700 marker:content-none">
+          GitHub sync and import settings
         </summary>
-        <div className="border-t border-slate-200 p-4 sm:p-5">
+        <div className="border-t border-slate-200 p-4">
           <GitHubSyncPanel />
         </div>
       </details>
