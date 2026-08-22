@@ -7,74 +7,43 @@ import { GitHubProjectMetadata } from "../../../components/GitHubProjectMetadata
 import { PROJECT_SECTIONS } from "../../../lib/constants";
 import { generateAiContext } from "../../../lib/markdown/generateAiContext";
 import { generateProjectResume } from "../../../lib/markdown/generateProjectResume";
-import {
-  getCurrentTask,
-  getMeaningfulActivities,
-  getProjectDisplayStatus,
-  hasActualBlocker,
-} from "../../../lib/presentation";
 import { useDashboard } from "../../../lib/repositories/repositoryContext";
 import type { Idea, Task, BrainDump, DevelopmentSession, ArchitectureDecision, CodexPrompt, Note, ImportantLink } from "../../../lib/models";
-import { toDisplayDate } from "../../../lib/utils/time";
-import {
-  buildProjectTimeline,
-  buildTaskQueue,
-  calculateProjectActiveDuration,
-  calculateTaskActiveDuration,
-  formatActiveDuration,
-  groupTimelineByDate,
-  normalizeIdeaStatus,
-  normalizeTaskStatus,
-} from "../../../lib/workflow";
+import { toDisplayDate, toShortDisplayDate } from "../../../lib/utils/time";
 
-const primarySections = [
-  { id: "workbench", label: "Overview" },
-  { id: "ideas", label: "Ideas" },
-  { id: "tasks", label: "Tasks" },
-  { id: "timeline", label: "Timeline" },
-] as const;
+const sectionLabels: Record<string, string> = {
+  workbench: "Overview",
+  ideas: "Ideas",
+  tasks: "Tasks",
+  "brain-dump": "Brain Dump",
+  scratchpad: "Scratchpad",
+  sessions: "Sessions",
+  architecture: "Architecture",
+  "codex-prompts": "Codex Prompts",
+  notes: "Notes",
+  links: "Important Links",
+  resume: "Project Resume",
+  "ai-context": "AI Context",
+  activity: "History",
+};
 
+const primarySections = ["workbench", "tasks", "ideas"] as const;
 const moreSections = [
-  { id: "activity", label: "History" },
-  { id: "sessions", label: "Sessions" },
-  { id: "brain-dump", label: "Brain Dump" },
-  { id: "scratchpad", label: "Scratchpad" },
-  { id: "notes", label: "Notes" },
-  { id: "links", label: "Important Links" },
-  { id: "architecture", label: "Architecture" },
-  { id: "codex-prompts", label: "Codex Prompts" },
-  { id: "resume", label: "Project Resume" },
-  { id: "ai-context", label: "AI Context" },
+  "activity",
+  "sessions",
+  "brain-dump",
+  "scratchpad",
+  "notes",
+  "links",
+  "architecture",
+  "codex-prompts",
+  "resume",
+  "ai-context",
 ] as const;
-
-function TruncatedText({
-  text,
-  limit = 180,
-  className = "",
-}: {
-  text: string;
-  limit?: number;
-  className?: string;
-}) {
-  if (!text) return null;
-  if (text.length <= limit) return <p className={className}>{text}</p>;
-
-  const preview = `${text.slice(0, limit).trimEnd()}…`;
-  return (
-    <details className={`group ${className}`}>
-      <summary className="cursor-pointer list-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-        <span className="group-open:hidden">{preview}</span>
-        <span className="ml-1 text-xs font-semibold text-blue-700 group-open:hidden">Read more</span>
-        <span className="hidden text-xs font-semibold text-blue-700 group-open:inline">Hide full content</span>
-      </summary>
-      <p className="mt-2 whitespace-pre-wrap break-words">{text}</p>
-    </details>
-  );
-}
 
 function copyToClipboard(value: string) {
-  if (typeof navigator !== "undefined" && navigator.clipboard) {
-    void navigator.clipboard.writeText(value).catch(() => undefined);
+  if (typeof navigator !== "undefined") {
+    void navigator.clipboard.writeText(value);
   }
 }
 
@@ -108,7 +77,9 @@ export default function ProjectWorkbenchPage() {
     archiveIdea,
     convertIdeaToTask,
     addTask,
-    setTaskStatus,
+    startTask,
+    blockTask,
+    completeTask,
     addBrainDump,
     convertBrainDumpToIdea,
     convertBrainDumpToTask,
@@ -214,28 +185,9 @@ export default function ProjectWorkbenchPage() {
 
   const activeTasks = projectTasks.filter((task) => task.status === "in_progress");
   const completedTasks = projectTasks.filter((task) => task.status === "completed");
-  const currentTask = getCurrentTask(projectTasks);
-  const projectDisplayStatus = getProjectDisplayStatus(project, projectTasks);
-  const meaningfulActivities = getMeaningfulActivities(projectActivity);
-  const ideasWaiting = projectIdeas
-    .filter((idea) => ["inbox", "ready_for_review"].includes(normalizeIdeaStatus(idea.status)))
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  const recentCompletedTasks = [...completedTasks]
-    .sort(
-      (a, b) =>
-        new Date(b.completedAt ?? b.updatedAt).getTime()
-        - new Date(a.completedAt ?? a.updatedAt).getTime(),
-    )
-    .slice(0, 3);
-  const recentCompletedSessions = projectSessions
-    .filter((session) => session.status === "completed" && (session.summary || session.objective))
-    .slice(0, 2);
   const recentIdeas = projectIdeas.filter((idea) =>
     `${idea.text} ${idea.description}`.toLowerCase().includes(searchIdea.toLowerCase()),
   );
-  const projectTimeline = buildProjectTimeline(data, project.id);
-  const timelineDays = groupTimelineByDate(projectTimeline);
-  const totalProjectTime = calculateProjectActiveDuration(data.developmentSessions, project.id);
 
   const onSubmitIdea = (event: FormEvent) => {
     event.preventDefault();
@@ -261,7 +213,7 @@ export default function ProjectWorkbenchPage() {
       title: taskTitle,
       details: taskDetails,
       type: taskType,
-      status: "open",
+      status: "backlog",
       priority: taskPriority,
       blockedReason: "",
       sourceIdeaId: null,
@@ -318,7 +270,7 @@ export default function ProjectWorkbenchPage() {
       purpose: promptPurpose,
       prompt: promptBody,
       resultSummary: promptResult,
-      status: "prepared",
+      status: "draft",
       relatedTaskId: null,
     });
     setPromptTitle("");
@@ -398,59 +350,54 @@ export default function ProjectWorkbenchPage() {
     }
   };
 
+  const advancedSectionOpen = moreSections.includes(section as (typeof moreSections)[number]);
   const tabs = (
-    <nav className="grid grid-cols-2 gap-2 sm:grid-cols-5" aria-label="Project sections">
+    <nav className="relative mb-6 flex flex-wrap items-center gap-2" aria-label="Project sections">
       {primarySections.map((item) => {
-        const href = `${pathname}?section=${item.id}`;
-        const active = section === item.id;
+        const href = `${pathname}?section=${item}`;
+        const active = section === item;
         return (
           <Link
             href={href}
-            key={item.id}
+            key={item}
             onClick={(event) => {
               event.preventDefault();
               router.replace(href);
             }}
-            aria-current={active ? "page" : undefined}
-            className={`flex min-h-11 items-center justify-center rounded-xl px-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-              active ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            className={`inline-flex min-h-11 items-center rounded-lg px-4 text-sm font-semibold ${
+              active ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
             }`}
           >
-            {item.label}
+            {sectionLabels[item]}
           </Link>
         );
       })}
 
-      <details className="group relative min-w-0">
-        <summary
-          className={`flex min-h-11 cursor-pointer list-none items-center justify-center rounded-xl px-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-            moreSections.some((item) => item.id === section)
-              ? "bg-slate-950 text-white"
-              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-          }`}
-        >
-          More
-          <span aria-hidden="true" className="ml-1 text-xs transition group-open:rotate-180">⌄</span>
+      <details className="group relative" open={advancedSectionOpen}>
+        <summary className={`inline-flex min-h-11 cursor-pointer list-none items-center rounded-lg border px-4 text-sm font-semibold marker:content-none ${
+          advancedSectionOpen
+            ? "border-slate-900 bg-slate-900 text-white"
+            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+        }`}>
+          {advancedSectionOpen ? sectionLabels[section] : "More"}
+          <span className="ml-2 text-xs" aria-hidden="true">▾</span>
         </summary>
-        <div className="absolute right-0 z-30 mt-2 grid w-[min(20rem,calc(100vw-2rem))] grid-cols-2 gap-1 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+        <div className="absolute left-0 z-20 mt-2 grid w-64 grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
           {moreSections.map((item) => {
-            const href = `${pathname}?section=${item.id}`;
-            const active = section === item.id;
+            const href = `${pathname}?section=${item}`;
             return (
               <Link
-                key={item.id}
                 href={href}
+                key={item}
                 onClick={(event) => {
                   event.preventDefault();
-                  event.currentTarget.closest("details")?.removeAttribute("open");
                   router.replace(href);
                 }}
-                aria-current={active ? "page" : undefined}
-                className={`rounded-lg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  active ? "bg-slate-100 font-semibold text-slate-950" : "text-slate-700 hover:bg-slate-50"
+                className={`rounded-lg px-3 py-2 text-sm ${
+                  section === item ? "bg-slate-100 font-semibold text-slate-950" : "text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                {item.label}
+                {sectionLabels[item]}
               </Link>
             );
           })}
@@ -460,42 +407,6 @@ export default function ProjectWorkbenchPage() {
   );
 
   const sectionContent = () => {
-    if (section === "timeline") {
-      return timelineDays.length > 0 ? (
-        <section className="space-y-6" aria-labelledby="project-timeline-heading">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h2 id="project-timeline-heading" className="text-2xl font-semibold text-slate-950">Project timeline</h2>
-              <p className="mt-1 text-sm text-slate-500">Meaningful work grouped by the day it happened.</p>
-            </div>
-            <p className="text-sm font-semibold text-slate-700">Total project time: {formatActiveDuration(totalProjectTime)}</p>
-          </div>
-          {timelineDays.map((day) => (
-            <article key={day.dateKey} className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <h3 className="font-semibold text-slate-950">{day.label}</h3>
-                {day.activeDurationMs > 0 ? <span className="text-sm font-medium text-slate-600">{formatActiveDuration(day.activeDurationMs)}</span> : null}
-              </div>
-              <ol className="mt-4 space-y-4">
-                {day.entries.map((entry) => (
-                  <li key={entry.id} className="border-l-2 border-blue-500 pl-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-semibold capitalize text-blue-700">{entry.actor}</span>
-                      <span className="text-xs capitalize text-slate-500">{entry.kind}</span>
-                      {entry.activeDurationMs > 0 ? <span className="text-xs text-slate-500">{formatActiveDuration(entry.activeDurationMs)}</span> : null}
-                    </div>
-                    <p className="mt-1 text-sm font-medium leading-6 text-slate-900">{entry.summary}</p>
-                    {entry.detail ? <TruncatedText text={entry.detail} limit={240} className="mt-1 text-sm leading-6 text-slate-600" /> : null}
-                    {entry.taskId ? <Link href={`/projects/${project.id}/tasks/${entry.taskId}`} className="mt-2 inline-block text-xs font-semibold text-blue-700 hover:underline">Open task</Link> : null}
-                  </li>
-                ))}
-              </ol>
-            </article>
-          ))}
-        </section>
-      ) : null;
-    }
-
     if (section === "ideas") {
       return (
         <section className="space-y-4">
@@ -525,9 +436,9 @@ export default function ProjectWorkbenchPage() {
                 onChange={(event) => setIdeaStatus(event.target.value as Idea["status"]) }
                 className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
               >
-                <option value="inbox">Inbox</option>
-                <option value="ready_for_review">Ready for review</option>
-                <option value="archived">Archived</option>
+                {(["inbox", "reviewed", "accepted", "rejected", "converted", "archived"] as const).map((status) => (
+                  <option key={status}>{status}</option>
+                ))}
               </select>
             </label>
             <label className="sm:col-span-1 block">
@@ -559,36 +470,38 @@ export default function ProjectWorkbenchPage() {
               <div key={idea.id} className="rounded border border-slate-200 p-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <TruncatedText text={idea.text} limit={140} className="font-medium break-words" />
-                    <p className="text-xs capitalize text-slate-500">{normalizeIdeaStatus(idea.status).replaceAll("_", " ")} • {idea.priority}</p>
-                    <TruncatedText
-                      text={idea.description}
-                      limit={220}
-                      className="mt-1 text-sm text-slate-600"
-                    />
+                    <p className="font-medium">{idea.text}</p>
+                    <p className="text-xs text-slate-500">{idea.status} • {idea.priority}</p>
+                    <p className="text-sm text-slate-600">{idea.description}</p>
                   </div>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {normalizeIdeaStatus(idea.status) !== "converted" ? (
-                      <button className="rounded border px-2 py-1 text-xs" onClick={() => convertIdeaToTask(idea.id)}>Convert to task</button>
-                    ) : idea.linkedTaskId ? (
-                      <Link className="rounded border px-2 py-1 text-xs" href={`/projects/${project.id}/tasks/${idea.linkedTaskId}`}>Open task</Link>
-                    ) : null}
-                    {normalizeIdeaStatus(idea.status) !== "archived" && normalizeIdeaStatus(idea.status) !== "converted" ? (
-                      <button className="rounded border px-2 py-1 text-xs" onClick={() => archiveIdea(idea.id)}>Archive</button>
-                    ) : null}
+                  <div className="flex gap-1">
+                    <button
+                      className="rounded border px-2 py-1 text-xs"
+                      onClick={() => convertIdeaToTask(idea.id)}
+                    >
+                      Convert to task
+                    </button>
+                    <button
+                      className="rounded border px-2 py-1 text-xs"
+                      onClick={() => archiveIdea(idea.id)}
+                    >
+                      Archive
+                    </button>
                   </div>
                 </div>
-                {normalizeIdeaStatus(idea.status) === "converted" ? null : (
-                  <label className="mt-2 block">
-                    <span className="text-xs">Quick edit description</span>
-                    <textarea
-                      value={idea.description}
-                      onChange={(event) => updateIdea(idea.id, { description: event.target.value })}
-                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
-                      rows={2}
-                    />
-                  </label>
-                )}
+                <label className="mt-2 block">
+                  <span className="text-xs">Quick edit description</span>
+                  <textarea
+                    value={idea.description}
+                    onChange={(event) =>
+                      updateIdea(idea.id, {
+                        description: event.target.value,
+                      })
+                    }
+                    className="mt-1 w-full rounded border border-slate-300 px-2 py-1"
+                    rows={2}
+                  />
+                </label>
               </div>
             ))}
           </div>
@@ -597,10 +510,7 @@ export default function ProjectWorkbenchPage() {
     }
 
     if (section === "tasks") {
-      const orderedTasks = buildTaskQueue(projectTasks);
-      const filteredTasks = filterTaskStatus === "all"
-        ? orderedTasks
-        : orderedTasks.filter((task) => normalizeTaskStatus(task.status) === normalizeTaskStatus(filterTaskStatus));
+      const filteredTasks = filterTaskStatus === "all" ? projectTasks : projectTasks.filter((task) => task.status === filterTaskStatus);
       return (
         <section className="space-y-4">
           <form className="grid gap-3 rounded border p-3 sm:grid-cols-4" onSubmit={onSubmitTask}>
@@ -650,11 +560,11 @@ export default function ProjectWorkbenchPage() {
             <button type="submit" className="rounded bg-sky-600 px-3 py-2 text-white sm:col-span-4">Add task</button>
           </form>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2">
             <button className={`rounded border px-2 py-1 ${filterTaskStatus === "all" ? "bg-slate-200" : ""}`} onClick={() => setFilterTaskStatus("all")}>
               All
             </button>
-            {(["open", "ready", "in_progress", "blocked", "completed", "cancelled"] as const).map((status) => (
+            {(["backlog", "ready", "in_progress", "blocked", "testing", "completed", "cancelled"] as const).map((status) => (
               <button
                 key={status}
                 className={`rounded border px-2 py-1 ${filterTaskStatus === status ? "bg-slate-200" : ""}`}
@@ -669,20 +579,21 @@ export default function ProjectWorkbenchPage() {
             <div key={task.id} className="rounded border border-slate-200 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <TruncatedText text={task.title} limit={140} className="font-medium break-words" />
-                  <p className="text-xs capitalize text-slate-500">{normalizeTaskStatus(task.status).replaceAll("_", " ")} • {task.type} • {task.priority} • {formatActiveDuration(calculateTaskActiveDuration(data.developmentSessions, task.id))}</p>
+                  <p className="font-medium">{task.title}</p>
+                  <p className="text-xs text-slate-500">{task.status} • {task.type} • {task.priority}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Link className="rounded border px-2 py-1 text-xs font-semibold text-blue-700" href={`/projects/${project.id}/tasks/${task.id}`}>Open</Link>
-                  {normalizeTaskStatus(task.status) === "in_progress" ? null : (
-                    <button className="rounded border px-2 py-1 text-xs" onClick={() => setTaskStatus(task.id, "in_progress")}>Start</button>
+                  {task.status === "in_progress" ? null : (
+                    <button className="rounded border px-2 py-1 text-xs" onClick={() => startTask(task.id)}>
+                      Start
+                    </button>
                   )}
-                  {normalizeTaskStatus(task.status) === "blocked" ? null : (
+                  {task.status === "blocked" ? null : (
                     <button
                       className="rounded border px-2 py-1 text-xs"
                       onClick={() => {
                         const reason = window.prompt("Block reason") || "blocked";
-                        setTaskStatus(task.id, "blocked", reason);
+                        blockTask(task.id, reason);
                       }}
                     >
                       Block
@@ -690,15 +601,13 @@ export default function ProjectWorkbenchPage() {
                   )}
                   <button
                     className="rounded border px-2 py-1 text-xs"
-                    onClick={() => {
-                      if (window.confirm("Mark this task completed?")) setTaskStatus(task.id, "completed");
-                    }}
+                    onClick={() => completeTask(task.id)}
                   >
                     Complete
                   </button>
                 </div>
               </div>
-              <TruncatedText text={task.details} limit={240} className="mt-1 text-sm text-slate-600" />
+              <p className="mt-1 text-sm text-slate-600">{task.details}</p>
             </div>
           ))}
         </section>
@@ -981,7 +890,7 @@ export default function ProjectWorkbenchPage() {
                     purpose: prompt.purpose,
                     prompt: prompt.prompt,
                     resultSummary: prompt.resultSummary,
-                    status: "prepared",
+                    status: "draft",
                     relatedTaskId: prompt.relatedTaskId,
                   });
                 }}>
@@ -1118,270 +1027,240 @@ export default function ProjectWorkbenchPage() {
     if (section === "activity") {
       return (
         <section>
-          <h2 className="text-xl font-semibold text-slate-950">History</h2>
-          {meaningfulActivities.length > 0 ? (
-            <ul className="mt-4 space-y-3">
-              {meaningfulActivities.map((item) => (
-                <li key={item.id} className="rounded-xl border border-slate-200 p-4">
-                  <p className="text-sm leading-6 text-slate-800">{item.summary}</p>
-                  <p className="mt-1 text-xs text-slate-500">{toDisplayDate(item.createdAt)}</p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">No meaningful changes have been recorded yet.</p>
-          )}
+          <h3 className="font-semibold">Activity</h3>
+          <ul className="mt-3 space-y-2">
+            {projectActivity.map((item) => (
+              <li key={item.id} className="rounded border border-slate-200 p-2">
+                <p className="text-sm">{item.summary}</p>
+                <p className="text-xs text-slate-500">{toDisplayDate(item.createdAt)} • {item.type}</p>
+              </li>
+            ))}
+          </ul>
         </section>
       );
     }
 
+    const nextTask = activeTasks[0]
+      || projectTasks.find((task) => ["ready", "blocked", "testing"].includes(task.status));
+    const nextStep = nextTask?.title
+      || project.currentObjective
+      || project.nextRecommendedTask
+      || continuitySession?.nextStartingPoint
+      || "No next step is saved yet.";
+    const hasBlocker = Boolean(
+      project.currentBlocker && !/^(none|none\.)$/i.test(project.currentBlocker.trim()),
+    );
+    const isPaused = project.manualStatus === "paused" || project.status === "on_hold";
+    const ideasWaiting = projectIdeas
+      .filter((idea) => idea.status === "inbox" || idea.status === "reviewed")
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 3);
+    const latestCompletedSession = projectSessions.find((session) => session.status === "completed");
+    const recentCompletedTasks = completedTasks
+      .slice()
+      .sort((a, b) => new Date(b.completedAt || b.updatedAt).getTime() - new Date(a.completedAt || a.updatedAt).getTime())
+      .slice(0, 3);
+    const meaningfulActivity = projectActivity
+      .filter((item) => !["github_repository_imported", "github_repository_updated"].includes(item.type))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .filter((item, index, all) => all.findIndex((candidate) => candidate.summary === item.summary) === index)
+      .slice(0, 3);
+
+    const toggleDevelopmentSession = () => {
+      if (activeSession) {
+        endSession(activeSession.id, {
+          summary: `Manual session stop at ${toDisplayDate(new Date().toISOString())}`,
+          nextStartingPoint: "Resume from where I stopped",
+        });
+        return;
+      }
+
+      startSession({
+        projectId: project.id,
+        objective: project.currentObjective || "Resume project",
+        summary: "",
+        tasksWorkedOn: activeTasks.map((item) => item.id),
+        tasksCompleted: completedTasks.map((item) => item.id),
+        ideasAdded: [],
+        problemsDiscovered: [],
+        decisionsMade: [],
+        promptsUsed: [],
+        filesModified: [],
+        commits: [],
+        nextStartingPoint: nextStep,
+        notes: "",
+      });
+    };
+
     return (
       <section className="space-y-6">
-        <section className="overflow-hidden rounded-3xl bg-slate-950 px-5 py-6 text-white shadow-lg shadow-slate-200 sm:px-8 sm:py-8">
-          <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-200">Next up</p>
-          <div className="mt-5 grid gap-5 sm:grid-cols-2">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Current task</p>
-              <p className="mt-1 text-lg font-semibold leading-7 text-white">
-                {activeTasks[0]?.title
-                  || currentTask?.title
-                  || continuitySession?.nextStartingPoint
-                  || project.nextRecommendedTask
-                  || "Review the project and choose the next task."}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Current goal</p>
-              <p className="mt-1 text-lg leading-7 text-slate-100">
-                {project.currentObjective || "Choose a clear outcome for the next work session."}
-              </p>
-            </div>
+        <header>
+          <Link href="/projects" className="text-sm font-semibold text-slate-500 hover:text-slate-950">
+            ← All projects
+          </Link>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950">{project.title}</h1>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+              isPaused
+                ? "bg-amber-50 text-amber-700"
+                : hasBlocker
+                ? "bg-rose-50 text-rose-700"
+                : project.status === "active"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-slate-100 text-slate-600"
+            }`}>
+              {isPaused ? "Paused" : hasBlocker ? "Blocked" : project.status}
+            </span>
           </div>
+          {project.purpose ? <p className="mt-2 max-w-3xl text-slate-600">{project.purpose}</p> : null}
+          <p className="mt-2 text-xs text-slate-500">Last worked {toShortDisplayDate(project.lastWorkedAt)}</p>
+        </header>
 
-          {hasActualBlocker(currentTask?.blockedReason || project.currentBlocker) ? (
-            <div className="mt-5 rounded-2xl border border-rose-400/40 bg-rose-400/10 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-rose-200">Current blocker</p>
-              <p className="mt-1 text-sm leading-6 text-rose-50">{currentTask?.blockedReason || project.currentBlocker}</p>
-            </div>
+        <section className="rounded-3xl bg-slate-950 p-6 text-white shadow-sm sm:p-8">
+          <p className="text-sm font-semibold uppercase tracking-wide text-emerald-300">Next up</p>
+          <h2 className="mt-3 max-w-4xl text-2xl font-bold leading-tight sm:text-3xl">{nextStep}</h2>
+          {project.currentObjective && project.currentObjective !== nextStep ? (
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-300">
+              Goal: {project.currentObjective}
+            </p>
           ) : null}
-
-          <p className="mt-5 text-sm text-slate-300">Total active project time: {formatActiveDuration(totalProjectTime)}</p>
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link href={currentTask ? `/projects/${project.id}/tasks/${currentTask.id}` : `${pathname}?section=tasks`} className="dd-btn bg-white text-slate-950 hover:bg-slate-100">
-              {currentTask ? "Continue current task" : "Open tasks"}
+          {hasBlocker ? (
+            <p className="mt-4 rounded-xl bg-rose-500/15 px-3 py-2 text-sm text-rose-100">
+              Blocker: {project.currentBlocker}
+            </p>
+          ) : null}
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Link href={`/projects/${project.id}?section=tasks`} className="dd-btn bg-white font-semibold text-slate-950 hover:bg-slate-100">
+              {nextTask ? "Open tasks" : "Add next task"}
             </Link>
             <Link
-              href={`${pathname}?section=workbench&qcProject=${project.id}&quickCapture=1`}
-              className="dd-btn border-white/30 bg-transparent text-white hover:bg-white/10"
+              href={`/projects/${project.id}?section=workbench&qcProject=${project.id}&quickCapture=1`}
+              className="dd-btn border border-white/25 text-white hover:bg-white/10"
             >
-              Add idea
+              + Add idea
             </Link>
             <button
               type="button"
-              className="dd-btn border-white/30 bg-transparent text-white hover:bg-white/10"
+              className="dd-btn border border-white/25 text-white hover:bg-white/10"
               onClick={() => {
                 copyToClipboard(contextText);
-                setResumeCopyStatus("Context copied");
+                setResumeCopyStatus("Project context copied");
               }}
             >
               Copy context for Codex
             </button>
           </div>
-          <p className="mt-3 min-h-5 text-xs text-slate-300" aria-live="polite">{resumeCopyStatus}</p>
+          {resumeCopyStatus ? <p className="mt-3 text-xs text-emerald-200">{resumeCopyStatus}</p> : null}
         </section>
 
-        {(recentCompletedTasks.length > 0 || recentCompletedSessions.length > 0) ? (
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
-            <h2 className="text-xl font-semibold text-slate-950">Recent progress</h2>
-            <div className="mt-4 space-y-4">
-              {recentCompletedSessions.map((session) => (
-                <article key={session.id} className="border-l-2 border-blue-500 pl-4">
-                  <p className="font-semibold text-slate-900">{session.objective}</p>
-                  <TruncatedText
-                    text={session.summary}
-                    limit={260}
-                    className="mt-1 text-sm leading-6 text-slate-600"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">{toDisplayDate(session.endedAt || session.startedAt)}</p>
-                </article>
-              ))}
-              {recentCompletedTasks.map((task) => (
-                <article key={task.id} className="border-l-2 border-emerald-500 pl-4">
-                  <TruncatedText text={task.title} limit={150} className="font-semibold text-slate-900" />
-                  <TruncatedText
-                    text={task.details}
-                    limit={220}
-                    className="mt-1 text-sm leading-6 text-slate-600"
-                  />
-                  <p className="mt-1 text-xs text-slate-500">Completed {toDisplayDate(task.completedAt || task.updatedAt)}</p>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
         <div className="grid gap-4 lg:grid-cols-2">
+          {(latestCompletedSession || recentCompletedTasks.length > 0) ? (
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-lg font-bold text-slate-950">Recent progress</h2>
+              {latestCompletedSession ? (
+                <div className="mt-3">
+                  <p className="text-sm leading-relaxed text-slate-700">
+                    {latestCompletedSession.summary || latestCompletedSession.objective}
+                  </p>
+                  {latestCompletedSession.nextStartingPoint ? (
+                    <p className="mt-2 text-sm text-slate-700">
+                      <span className="font-semibold text-slate-950">Resume from:</span>{" "}
+                      {latestCompletedSession.nextStartingPoint}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-slate-500">{toShortDisplayDate(latestCompletedSession.endedAt || latestCompletedSession.startedAt)}</p>
+                </div>
+              ) : null}
+              {recentCompletedTasks.length > 0 ? (
+                <ul className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                  {recentCompletedTasks.map((task) => (
+                    <li key={task.id} className="flex gap-2 text-sm text-slate-700">
+                      <span className="text-emerald-600" aria-hidden="true">✓</span>
+                      <span>{task.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </article>
+          ) : null}
+
           {ideasWaiting.length > 0 ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+            <article className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-semibold text-slate-950">Ideas waiting</h2>
-                <Link href={`${pathname}?section=ideas`} className="text-sm font-semibold text-blue-700 hover:underline">
+                <h2 className="text-lg font-bold text-amber-950">Ideas waiting</h2>
+                <Link href={`/projects/${project.id}?section=ideas`} className="text-sm font-semibold text-amber-800 hover:underline">
                   View all
                 </Link>
               </div>
-              <ul className="mt-4 space-y-4">
-                {ideasWaiting.slice(0, 3).map((idea) => (
-                  <li key={idea.id}>
-                    <TruncatedText text={idea.text} limit={150} className="font-medium text-slate-900" />
-                    <TruncatedText text={idea.description} limit={180} className="mt-1 text-sm leading-6 text-slate-600" />
-                  </li>
+              <ul className="mt-3 space-y-2">
+                {ideasWaiting.map((idea) => (
+                  <li key={idea.id} className="rounded-xl bg-white/80 px-3 py-2 text-sm text-amber-950">{idea.text}</li>
                 ))}
               </ul>
-            </section>
+            </article>
           ) : null}
 
-          {meaningfulActivities.length > 0 ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+          {meaningfulActivity.length > 0 ? (
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-semibold text-slate-950">Latest meaningful changes</h2>
-                <Link href={`${pathname}?section=activity`} className="text-sm font-semibold text-blue-700 hover:underline">
+                <h2 className="text-lg font-bold text-slate-950">Latest changes</h2>
+                <Link href={`/projects/${project.id}?section=activity`} className="text-sm font-semibold text-slate-600 hover:underline">
                   History
                 </Link>
               </div>
-              <ul className="mt-4 space-y-4">
-                {meaningfulActivities.slice(0, 4).map((item) => (
-                  <li key={item.id} className="border-l-2 border-slate-200 pl-3">
-                    <p className="text-sm leading-6 text-slate-800">{item.summary}</p>
-                    <p className="mt-1 text-xs text-slate-500">{toDisplayDate(item.createdAt)}</p>
+              <ul className="mt-3 space-y-3">
+                {meaningfulActivity.map((item) => (
+                  <li key={item.id} className="text-sm text-slate-700">
+                    <p>{item.summary}</p>
+                    <p className="mt-1 text-xs text-slate-500">{toShortDisplayDate(item.createdAt)}</p>
                   </li>
                 ))}
               </ul>
-            </section>
+            </article>
           ) : null}
 
           {projectLinks.length > 0 ? (
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-xl font-semibold text-slate-950">Useful links</h2>
-                <Link href={`${pathname}?section=links`} className="text-sm font-semibold text-blue-700 hover:underline">
-                  Manage
-                </Link>
+                <h2 className="text-lg font-bold text-slate-950">Useful links</h2>
+                <Link href={`/projects/${project.id}?section=links`} className="text-sm font-semibold text-slate-600 hover:underline">Manage</Link>
               </div>
-              <ul className="mt-4 space-y-3">
-                {projectLinks.slice(0, 5).map((link: ImportantLink) => (
+              <ul className="mt-3 space-y-2">
+                {projectLinks.slice(0, 4).map((link: ImportantLink) => (
                   <li key={link.id}>
-                    <a
-                      href={link.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-medium text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                    >
-                      {link.title}
+                    <a href={link.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-emerald-700 hover:underline">
+                      {link.title} ↗
                     </a>
                   </li>
                 ))}
               </ul>
-            </section>
+            </article>
           ) : null}
         </div>
 
-        <details className="rounded-2xl border border-slate-200 bg-slate-50">
-          <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+        <details className="rounded-2xl border border-slate-200 bg-white">
+          <summary className="cursor-pointer list-none px-5 py-4 text-sm font-semibold text-slate-700 marker:content-none">
             Project tools and technical details
           </summary>
-          <div className="space-y-6 border-t border-slate-200 p-5">
-            <div className="grid gap-5 text-sm sm:grid-cols-2">
-              <div>
-                <h3 className="font-semibold text-slate-950">Project details</h3>
-                <dl className="mt-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-slate-600">
-                  <dt>Status</dt>
-                  <dd className="font-medium text-slate-900">{projectDisplayStatus}</dd>
-                  <dt>Branch</dt>
-                  <dd className="break-all font-medium text-slate-900">{project.currentBranch || "main"}</dd>
-                  <dt>Last worked</dt>
-                  <dd className="font-medium text-slate-900">{toDisplayDate(project.lastWorkedAt || project.updatedAt)}</dd>
-                  <dt>Ideas</dt>
-                  <dd className="font-medium text-slate-900">{projectIdeas.length}</dd>
-                  <dt>Open tasks</dt>
-                  <dd className="font-medium text-slate-900">
-                    {projectTasks.filter((task) => !["completed", "cancelled"].includes(task.status)).length}
-                  </dd>
-                </dl>
-                {project.purpose ? <p className="mt-4 leading-6 text-slate-600">{project.purpose}</p> : null}
-              </div>
-
-              {project.externalSources?.github ? (
-                <div>
-                  <h3 className="font-semibold text-slate-950">Repository</h3>
-                  <GitHubProjectMetadata project={project} />
-                </div>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-5">
-              <button
-                type="button"
-                className="dd-btn dd-btn--secondary"
-                onClick={() =>
-                  activeSession
-                    ? endSession(activeSession.id, {
-                        summary: `Manual session stop at ${toDisplayDate(new Date().toISOString())}`,
-                        nextStartingPoint: "Resume from where I stopped",
-                      })
-                    : startSession({
-                        projectId: project.id,
-                        objective: project.currentObjective || "Resume project",
-                        summary: "",
-                        tasksWorkedOn: activeTasks.map((item) => item.id),
-                        tasksCompleted: completedTasks.map((item) => item.id),
-                        ideasAdded: [],
-                        problemsDiscovered: [],
-                        decisionsMade: [],
-                        promptsUsed: [],
-                        filesModified: [],
-                        commits: [],
-                        nextStartingPoint: currentTask?.title || "Review last work",
-                        notes: "",
-                      })
-                }
-              >
+          <div className="border-t border-slate-200 p-5">
+            <GitHubProjectMetadata project={project} />
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" className="dd-btn dd-btn--secondary" onClick={toggleDevelopmentSession}>
                 {activeSession ? "End development session" : "Start development session"}
               </button>
-              <Link href={`${pathname}?section=sessions`} className="dd-btn dd-btn--secondary">Sessions</Link>
-              <Link href={`${pathname}?section=architecture`} className="dd-btn dd-btn--secondary">Architecture</Link>
-              <Link href={`${pathname}?section=resume`} className="dd-btn dd-btn--secondary">Project resume</Link>
-              <Link href={`${pathname}?section=ai-context`} className="dd-btn dd-btn--secondary">AI context</Link>
+              <Link href={`/projects/${project.id}?section=resume`} className="dd-btn dd-btn--secondary">Project resume</Link>
+              <Link href={`/projects/${project.id}?section=ai-context`} className="dd-btn dd-btn--secondary">AI context</Link>
+              <Link href={`/projects/${project.id}?section=notes`} className="dd-btn dd-btn--secondary">Notes</Link>
             </div>
+            <dl className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
+              <div><dt className="font-medium text-slate-900">Branch</dt><dd>{project.currentBranch || "main"}</dd></div>
+              <div><dt className="font-medium text-slate-900">Last updated</dt><dd>{toShortDisplayDate(project.updatedAt)}</dd></div>
+            </dl>
           </div>
         </details>
       </section>
     );
   };
 
-  const statusTone = projectDisplayStatus === "Blocked"
-    ? "border-rose-200 bg-rose-50 text-rose-700"
-    : projectDisplayStatus === "Paused"
-      ? "border-amber-200 bg-amber-50 text-amber-700"
-      : "border-emerald-200 bg-emerald-50 text-emerald-700";
-
-  return (
-    <div className="space-y-7">
-      <header>
-        <Link href="/projects" className="text-sm font-semibold text-blue-700 hover:underline">
-          Projects
-        </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="min-w-0 break-words text-3xl font-semibold tracking-tight text-slate-950">
-            {project.title}
-          </h1>
-          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusTone}`}>
-            {projectDisplayStatus}
-          </span>
-        </div>
-      </header>
-      {tabs}
-      <div>{sectionContent()}</div>
-    </div>
-  );
+  return <div>{tabs}{sectionContent()}</div>;
 }
