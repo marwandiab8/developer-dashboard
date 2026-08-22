@@ -6,7 +6,6 @@ import {
   onAuthStateChanged,
   setPersistence,
   signInWithPopup,
-  signInWithRedirect,
   signOut as signOutAuth,
   type User,
 } from "firebase/auth";
@@ -81,9 +80,11 @@ const parseAuthError = (error: unknown) => {
 const errorMessageForCode = (code: string) => {
   switch (code) {
     case "auth/popup-blocked":
-      return "Sign-in popup was blocked. Using redirect as a fallback.";
+      return "Google sign-in was blocked. Allow pop-ups for this site, then try again.";
     case "auth/popup-closed":
       return "Sign-in popup was closed before login completed.";
+    case "auth/web-storage-unsupported":
+      return "This browser is blocking the storage needed to keep you signed in. Use a normal browser tab and allow site data.";
     case "auth/operation-not-allowed":
       return "Google sign-in is disabled. Enable it in Firebase Console > Authentication > Sign-in method.";
     case "auth/unauthorized-domain":
@@ -93,14 +94,6 @@ const errorMessageForCode = (code: string) => {
     default:
       return "Unable to sign in.";
   }
-};
-
-const isAppleMobile = () => {
-  if (typeof navigator === "undefined") {
-    return false;
-  }
-
-  return /iPad|iPhone|iPod/.test(navigator.userAgent);
 };
 
 export function AuthProvider({ children }: PropsWithChildren) {
@@ -184,11 +177,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      if (isAppleMobile()) {
-        await signInWithRedirect(auth, googleProvider);
-        return;
-      }
-
       try {
         await signInWithPopup(auth, googleProvider);
         if (!isCurrentOperation()) {
@@ -203,11 +191,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
           return;
         }
         const code = parseAuthError(error);
-        if (code === "auth/popup-blocked") {
-          await signInWithRedirect(auth, googleProvider);
-          return;
-        }
-
         setStatus("unauthenticated");
         setLastError(errorMessageForCode(code));
       }
