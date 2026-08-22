@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { AppShell } from "../components/AppShell";
 import { AuthProvider } from "../lib/auth/AuthProvider";
 import { DashboardProvider } from "../lib/repositories/repositoryContext";
@@ -19,7 +20,9 @@ export default function RootLayout({
       <body className="min-h-full">
         <AuthProvider>
           <DashboardProvider>
-            <AppShell>{children}</AppShell>
+            <Suspense fallback={<main className="min-h-screen bg-slate-50" aria-label="Loading dashboard" />}>
+              <AppShell>{children}</AppShell>
+            </Suspense>
           </DashboardProvider>
         </AuthProvider>
       </body>
