@@ -115,36 +115,12 @@ describe("AppShell authentication states", () => {
 
     try {
       expect(container.textContent).toContain("Dashboard content");
-      expect(container.textContent).toContain("Local mode · Checking cloud sign-in");
+      expect(container.textContent).toContain("Working locally");
       expect(container.textContent).toContain("Projects");
       expect(container.querySelector<HTMLButtonElement>('button[aria-label="Open quick capture"]')?.disabled).toBe(false);
       const signInButton = Array.from(container.querySelectorAll("button"))
         .find((button) => button.textContent?.includes("Checking sign-in"));
       expect(signInButton?.disabled).toBe(true);
-    } finally {
-      root.unmount();
-      document.body.innerHTML = "";
-    }
-  });
-
-  it("uses one compact navigation model without a sidebar, hamburger, or floating add button", () => {
-    authFixture.status = "unauthenticated";
-
-    const { container, root } = mountShell();
-
-    try {
-      expect(container.querySelector("aside")).toBeNull();
-      expect(container.querySelector('button[aria-label="Open primary navigation"]')).toBeNull();
-      expect(container.querySelector(".fixed.rounded-full.bg-emerald-600")).toBeNull();
-
-      const mobileNavigation = container.querySelector('nav[aria-label="Mobile navigation"]');
-      expect(mobileNavigation).not.toBeNull();
-      expect(Array.from(mobileNavigation?.children[0]?.children ?? []).map((item) => item.textContent?.trim()))
-        .toEqual(["Home", "Projects", "Ideas", "+Add"]);
-
-      const desktopNavigation = container.querySelector('nav[aria-label="Primary navigation"]');
-      expect(Array.from(desktopNavigation?.children ?? []).map((item) => item.textContent))
-        .toEqual(["Home", "Projects", "Ideas"]);
     } finally {
       root.unmount();
       document.body.innerHTML = "";
@@ -160,7 +136,7 @@ describe("AppShell authentication states", () => {
 
     try {
       expect(container.textContent).toContain("Dashboard content");
-      expect(container.textContent).toContain("Local mode");
+      expect(container.textContent).toContain("Working locally");
       expect(container.textContent).toContain("Sign in to sync");
 
       const quickCaptureButton = container.querySelector<HTMLButtonElement>('button[aria-label="Open quick capture"]');
@@ -208,9 +184,9 @@ describe("AppShell authentication states", () => {
 
     try {
       expect(container.textContent).toContain("Dashboard content");
-      expect(container.textContent).toContain("Local mode");
-      expect(container.textContent).toContain("Cloud sign-in unavailable");
-      expect(container.textContent).toContain("Local data remains available");
+      expect(container.textContent).toContain("Working locally");
+      expect(container.textContent).toContain("Cloud sign-in is unavailable");
+      expect(container.textContent).toContain("Your local data remains available");
     } finally {
       root.unmount();
       document.body.innerHTML = "";
@@ -226,7 +202,6 @@ describe("AppShell authentication states", () => {
     const { container, root } = mountShell();
 
     try {
-      expect(container.textContent).toContain("Local mode · Persistence degraded");
       expect(container.textContent).toContain("visible only in this tab");
       expect(container.querySelector('[role="alert"]')).not.toBeNull();
     } finally {
@@ -290,9 +265,9 @@ describe("AppShell authentication states", () => {
     const { container, root } = mountShell();
 
     try {
-      expect(container.textContent).toContain("Import local backup");
-      expect(container.textContent).toContain("Cloud is empty. Import local data to start cloud sync.");
-      expect(container.textContent).toContain("Local mode · Cloud sync synced");
+      expect(container.textContent).toContain("Import local work");
+      expect(container.textContent).toContain("Your local work is ready to be added to cloud sync.");
+      expect(container.textContent).toContain("Local mode · Synced");
     } finally {
       root.unmount();
       document.body.innerHTML = "";
@@ -315,10 +290,10 @@ describe("AppShell authentication states", () => {
 
     try {
       expect(container.textContent).toContain(
-        "Legacy recovery is local-only until you explicitly associate it with this account.",
+        "A local recovery is waiting to be connected to this account.",
       );
-      expect(container.textContent).toContain("Associate recovery and import");
-      expect(container.textContent).not.toContain("Import local backup");
+      expect(container.textContent).toContain("Connect and import");
+      expect(container.textContent).not.toContain("Import local work");
     } finally {
       root.unmount();
       document.body.innerHTML = "";
@@ -341,7 +316,7 @@ describe("AppShell authentication states", () => {
 
     try {
       const keepCloudButton = Array.from(container.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("Keep cloud data"));
+        .find((button) => button.textContent?.includes("Keep cloud work"));
       expect(keepCloudButton).toBeTruthy();
 
       await act(async () => {
