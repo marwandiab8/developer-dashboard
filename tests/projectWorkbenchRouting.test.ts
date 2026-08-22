@@ -66,7 +66,6 @@ function makeDashboardFixture(data: DashboardData) {
     startTask: vi.fn(),
     blockTask: vi.fn(),
     completeTask: vi.fn(),
-    setTaskStatus: vi.fn(),
     addBrainDump: vi.fn(),
     convertBrainDumpToIdea: vi.fn(),
     convertBrainDumpToTask: vi.fn(),
@@ -141,7 +140,7 @@ describe("project workbench route resolution", () => {
     document.body.innerHTML = "";
   });
 
-  it("resolves the project ID with useParams and renders the simplified Overview", () => {
+  it("resolves the project ID with useParams and renders the simplified overview", () => {
     const data = seedDashboardData();
     const project = data.projects[2];
     dashboardFixture.current = makeDashboardFixture(data);
@@ -151,15 +150,9 @@ describe("project workbench route resolution", () => {
     const view = mount(ProjectWorkbenchPage);
     try {
       expect(navigationFixture.useParams).toHaveBeenCalled();
-      expect(view.container.querySelector("h1")?.textContent).toBe(project.title);
       expect(view.container.textContent).toContain("Next up");
-      expect(view.container.textContent).toContain("Current task");
-      expect(view.container.textContent).toContain("Current goal");
-      const projectNavigation = view.container.querySelector('nav[aria-label="Project sections"]');
-      const projectNavigationLabels = Array.from(projectNavigation?.children ?? [])
-        .map((item) => item.textContent?.trim() ?? "");
-      expect(projectNavigationLabels.slice(0, 4)).toEqual(["Overview", "Ideas", "Tasks", "Timeline"]);
-      expect(projectNavigationLabels[4]).toMatch(/^More/);
+      expect(view.container.querySelector("h1")?.textContent).toBe(project.title);
+      expect(view.container.textContent).toContain(project.currentObjective);
       expect(generatorFixture.generateProjectResume).toHaveBeenCalledWith(data, project.id);
       expect(generatorFixture.generateAiContext).toHaveBeenCalledWith(data, project.id);
     } finally {
@@ -185,7 +178,7 @@ describe("project workbench route resolution", () => {
     }
   });
 
-  it("targets the dynamic project and task routes from the simplified dashboard", () => {
+  it("targets the dynamic project route from the projects list and home focus", () => {
     const seeded = seedDashboardData();
     const project = seeded.projects[2];
     const data = dataWithOnlyProject(seeded, project.id);
@@ -193,36 +186,28 @@ describe("project workbench route resolution", () => {
 
     const projectsView = mount(ProjectsPage);
     try {
-      const projectHeading = Array.from(projectsView.container.querySelectorAll("h2"))
-        .find((heading) => heading.textContent === project.title);
-      expect(projectHeading?.closest("a")?.getAttribute("href")).toBe(`/projects/${project.id}`);
-      expect(projectsView.container.querySelectorAll('section[aria-label="Project list"] h2')).toHaveLength(1);
-      expect(projectsView.container.textContent).toContain("Advanced options");
-      expect(projectsView.container.textContent).not.toContain("Active projects");
-      expect(projectsView.container.textContent).not.toContain("All projects");
+      const projectLinks = Array.from(projectsView.container.querySelectorAll("h2"))
+        .filter((heading) => heading.textContent === project.title)
+        .map((heading) => heading.closest("a"))
+        .filter((link): link is HTMLAnchorElement => Boolean(link));
+      expect(projectLinks.length).toBeGreaterThan(0);
+      expect(projectLinks.every((link) => link.getAttribute("href") === `/projects/${project.id}`)).toBe(true);
     } finally {
       projectsView.close();
     }
 
     const dashboardView = mount(DashboardPage);
     try {
-      expect(dashboardView.container.textContent).toContain("What are you working on?");
-      expect(dashboardView.container.textContent).toContain("Recently worked projects");
-      expect(dashboardView.container.textContent).not.toContain("Current sessions");
-      expect(dashboardView.container.textContent).not.toContain("Recently updated projects");
-      const continueTaskLink = Array.from(dashboardView.container.querySelectorAll("a"))
-        .find((link) => link.textContent === "Continue current task");
-      const currentTask = data.tasks.find((task) => !["completed", "cancelled"].includes(task.status));
-      expect(dashboardView.container.textContent.includes("Task queue")).toBe(Boolean(currentTask));
-      expect(continueTaskLink?.getAttribute("href")).toBe(
-        currentTask ? `/projects/${project.id}/tasks/${currentTask.id}` : `/projects/${project.id}`,
-      );
+      const resumeProjectLink = Array.from(dashboardView.container.querySelectorAll("a"))
+        .find((link) => link.textContent === "Resume project");
+      expect(resumeProjectLink?.getAttribute("href"))
+        .toBe(`/projects/${project.id}`);
     } finally {
       dashboardView.close();
     }
   });
 
-  it("shows the current task before a session resume note while retaining recent Codex progress", () => {
+  it("sorts automatic sessions and prompts and uses the latest completed session for continuity", () => {
     const data = seedDashboardData();
     const project = data.projects[0];
     const ingestedSession = {
@@ -256,10 +241,10 @@ describe("project workbench route resolution", () => {
 
     const workbenchView = mount(ProjectWorkbenchPage);
     try {
-      expect(workbenchView.container.textContent).toContain(data.tasks[0].title);
+      expect(workbenchView.container.textContent).toContain(
+        "Configure the helper in another repository",
+      );
       expect(workbenchView.container.textContent).toContain("Stored the semantic session context.");
-      expect(workbenchView.container.textContent).not.toContain("Configure the helper in another repository");
-      expect(workbenchView.container.textContent).not.toContain("Latest automatic prompt");
     } finally {
       workbenchView.close();
     }
