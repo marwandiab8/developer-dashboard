@@ -72,6 +72,7 @@ import { dashboardReducer } from "./reducer";
 import { createFirestoreRepository } from "./firestoreAdapter";
 import { createCloudMutationContract } from "./cloudMutationContract";
 import { buildRecoveryProjection } from "./recoveryProjection";
+import { shouldAutoKeepCloud } from "./autoKeepCloud";
 import {
   type DashboardRepository,
   type DashboardSyncStatus,
@@ -2548,6 +2549,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const beginMigrationKeepCloud = useCallback(async () => {
     return beginMigrationImport("keep-cloud");
   }, [beginMigrationImport]);
+
+  // Keep cloud data without asking (see autoKeepCloud.ts). Tried once per signed-in account per page load, so
+  // a keep-cloud that can't finish (e.g. a recovery journal that must be imported first) falls back to the
+  // usual prompt instead of retrying in a loop.
+  const autoKeptCloudForUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const uid = renderedAuthStatus === "authenticated" ? renderedAuthUid : null;
+    if (!uid || autoKeptCloudForUidRef.current === uid) return;
+    const scope = cloudRecoveryScopeForUid(uid);
+    const hasUnsentWork = getPendingCloudReconciliationActions().length > 0
+      || loadCloudRecoveryDashboardData(scope) !== null
+      || loadCloudRecoveryDashboardData() !== null
+      || getLocalDataReconciliationState().required
+      || isolatesSharedLocalDataRef.current
+      || legacyRecoveryWorkspaceRef.current
+      || unpersistedLocalProjectionRef.current !== null;
+    if (!shouldAutoKeepCloud(migrationState, true, hasUnsentWork)) return;
+    autoKeptCloudForUidRef.current = uid;
+    // Started after this render, not inside the effect itself: keep-cloud updates state as it runs.
+    queueMicrotask(() => void beginMigrationKeepCloud());
+  }, [migrationState, renderedAuthStatus, renderedAuthUid, beginMigrationKeepCloud]);
 
   const exportLocalData = useCallback(async () => {
     if (isolatesSharedLocalDataRef.current) {

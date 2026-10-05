@@ -32,6 +32,10 @@ import type {
 } from "../src/lib/repositories/types";
 import { dashboardReducer } from "../src/lib/repositories/reducer";
 import { buildRecoveryProjection } from "../src/lib/repositories/recoveryProjection";
+import { setAutoKeepCloud } from "../src/lib/repositories/autoKeepCloud";
+import { afterEach } from "vitest";
+
+afterEach(() => setAutoKeepCloud(true));
 
 const fixtures = vi.hoisted(() => ({
   auth: {
@@ -3219,6 +3223,7 @@ describe("migration marker startup evaluation", () => {
   });
 
   it("does not hide markerless Phase 1A local work behind a completed cloud marker", async () => {
+    setAutoKeepCloud(false); // the manual choice; automatic keep-cloud is tested separately
     const { cloudData } = localAndCloudData();
     const marker = migrationState({
       phase: "complete",
@@ -3272,6 +3277,7 @@ describe("migration marker startup evaluation", () => {
   });
 
   it("requires review for a markerless Phase 1A payload with an added entity", async () => {
+    setAutoKeepCloud(false); // the manual choice; automatic keep-cloud is tested separately
     const localData = seedDashboardData();
     localData.ideas.push({
       ...localData.ideas[0],
@@ -3303,6 +3309,7 @@ describe("migration marker startup evaluation", () => {
   });
 
   it("does not acknowledge a legacy edit when import reports existing-ID skips without replay actions", async () => {
+    setAutoKeepCloud(false); // the manual choice; automatic keep-cloud is tested separately
     const { cloudData } = localAndCloudData();
     const marker = migrationState({
       phase: "complete",
@@ -3458,6 +3465,7 @@ describe("migration marker startup evaluation", () => {
   });
 
   it("keeps new signed-out local work visible when a completed cloud migration reconnects", async () => {
+    setAutoKeepCloud(false); // the manual choice; automatic keep-cloud is tested separately
     const { cloudData } = localAndCloudData();
     markLocalDataCloudAcknowledged();
     const marker = migrationState({
@@ -3496,6 +3504,52 @@ describe("migration marker startup evaluation", () => {
     expect(mounted.contextRef.current!.migrationState.phase).toBe("required");
     expect(mounted.contextRef.current!.repositoryMode).toBe("local");
     expect(mounted.contextRef.current!.data.notes.some((note) => note.title === "New signed-out work")).toBe(true);
+    mounted.unmount();
+  });
+
+  it("automatically keeps cloud data when signed-out local edits meet a completed cloud migration, backing them up", async () => {
+    const { cloudData } = localAndCloudData();
+    markLocalDataCloudAcknowledged();
+    const marker = migrationState({
+      phase: "complete",
+      markerStatus: "import_complete",
+      completedAt: "2026-08-07T12:00:00.000Z",
+      hasLocalData: true,
+      hasCloudData: true,
+    });
+    const cloudRepository = createCloudRepository(cloudData, marker);
+    fixtures.createFirestoreRepository.mockResolvedValue(cloudRepository);
+
+    const mounted = await mountProvider();
+    expect(mounted.contextRef.current!.repositoryMode).toBe("cloud");
+
+    fixtures.auth.status = "unauthenticated";
+    fixtures.auth.user = null;
+    mounted.rerender();
+    await flushAsyncWork();
+    act(() => {
+      mounted.contextRef.current!.addNote({
+        projectId: mounted.contextRef.current!.data.projects[0].id,
+        title: "Signed-out edit",
+        section: "offline",
+        tags: [],
+        markdown: "Made while sign-in was still loading.",
+      });
+    });
+    await flushAsyncWork(24);
+
+    fixtures.auth.status = "authenticated";
+    fixtures.auth.user = { uid: "owner-user" };
+    mounted.rerender();
+    await flushAsyncWork(48);
+
+    // No prompt: the cloud copy is active, and the signed-out edit was saved to a local backup first.
+    expect(mounted.contextRef.current!.migrationState.phase).not.toBe("required");
+    expect(mounted.contextRef.current!.repositoryMode).toBe("cloud");
+    const backups = Object.keys(localStorage)
+      .map((key) => localStorage.getItem(key) ?? "")
+      .filter((value) => value.includes("Signed-out edit") && value.includes("web-keep-cloud"));
+    expect(backups.length).toBeGreaterThan(0);
     mounted.unmount();
   });
 
