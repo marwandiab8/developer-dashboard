@@ -249,6 +249,19 @@ test("read-only project verification reuses exact matching and performs zero wri
   assert.deepEqual([...database.documents.entries()], beforeAmbiguous);
 });
 
+test("the History names Claude Code sessions AI Claude and other sessions Codex", async () => {
+  const database = new FakeFirestore();
+  database.documents.set(`users/${owner}/projects/${projectOne}`, projectRecord());
+  const persistence = persistenceFor(database);
+  const codex = await persistence.ingest(asInput(parseCodexSessionIngestV1(rawPayload())));
+  assert.equal(database.documents.get(`users/${owner}/activity/${codex.activityId}`)?.summary, "Codex completed: Codex objective");
+  const claude = await persistence.ingest(
+    asInput(parseCodexSessionIngestV1(rawPayload({ externalSessionId: "claude-code-9c93170d-sl-1" }))),
+  );
+  assert.equal(database.documents.get(`users/${owner}/activity/${claude.activityId}`)?.summary, "AI Claude completed: Codex objective");
+  assert.equal(database.documents.get(`users/${owner}/activity/${claude.activityId}`)?.source, "codex");
+});
+
 test("atomically creates one complete Codex projection and recognizes an ambiguous-response retry", async () => {
   const database = new FakeFirestore();
   database.documents.set(`users/${owner}/projects/${projectOne}`, projectRecord());
