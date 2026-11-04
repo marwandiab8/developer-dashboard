@@ -131,6 +131,11 @@ const titleFrom = (payload: CodexSessionIngestV1): string => {
   return source.trim().split(/\r?\n/, 1)[0].slice(0, 160) || "Codex development session";
 };
 
+// Claude Code reports through this same Codex channel, with session ids starting "claude-code-"; the History names
+// it "AI Claude" (Marwan's call, 2026-11-04). The integration itself stays source "codex".
+const agentLabelFor = (externalSessionId: string): string =>
+  externalSessionId.startsWith("claude-code-") ? "AI Claude" : "Codex";
+
 const asMilliseconds = (value: unknown): number | null => {
   if (value instanceof Date) return value.getTime();
   if (typeof value === "string" || typeof value === "number") {
@@ -612,7 +617,7 @@ export class FirestoreCodexIngestionPersistence implements CodexIngestionPersist
       transaction.create(this.db.doc(activityPath(input.uid, result.activityId)), {
         projectId: project.id,
         type: workflow?.workSessionStatus === "paused" ? "session_paused" : "session_completed",
-        summary: `Codex ${workflow?.workSessionStatus === "paused" ? "paused" : "completed"}: ${title}`,
+        summary: `${agentLabelFor(session.externalSessionId)} ${workflow?.workSessionStatus === "paused" ? "paused" : "completed"}: ${title}`,
         entityType: "development_session",
         entityId: result.sessionId,
         metadata: JSON.stringify({
